@@ -41,7 +41,8 @@ Placements rework, after 0.1.0 was used on a real profile.
   (13px on the shipped theme) — so the chip reads as one more line of the editor rather than a
   banner with more air on one side. This is measured in *ink*: Joplin's title input extends about
   12px below the last inked pixel of the title, so balancing the boxes still looked lopsided on
-  screen. In the compact placement the moved icons are also brought to the chip's own height, so
+  screen. The depth used is the title font's own descender depth, measured once per font, so the
+  chip never shifts while a title is being typed. In the compact placement the moved icons are also brought to the chip's own height, so
   they cannot set the gap below it.
 - **`below-title` left edge.** The chip now lands exactly on the title text and the editor toolbar.
   As well as asking for Joplin's editor padding (with a fallback, since that CSS variable only

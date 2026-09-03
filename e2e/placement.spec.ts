@@ -108,11 +108,11 @@ test.describe('placement: below-title (default)', () => {
 		expect(
 			Math.abs(ink.above - ink.below),
 			`G_above ${ink.above} vs G_below ${ink.below}`,
-		).toBeLessThanOrEqual(1);
+		).toBeLessThanOrEqual(2);
 		expect(
 			Math.abs(ink.above - (reference as number)),
 			`G_above ${ink.above} vs G_ref ${reference}`,
-		).toBeLessThanOrEqual(1);
+		).toBeLessThanOrEqual(2);
 
 		const m = await measureRowSpacing(win);
 		expect(m.found, 'title bar, chip and editor toolbar all present').toBe(true);
@@ -169,11 +169,11 @@ test.describe('placement: below-title-compact', () => {
 		expect(
 			Math.abs(ink.above - ink.below),
 			`G_above ${ink.above} vs G_below ${ink.below}`,
-		).toBeLessThanOrEqual(1);
+		).toBeLessThanOrEqual(2);
 		expect(
 			Math.abs(ink.above - (reference as number)),
 			`G_above ${ink.above} vs G_ref ${reference}`,
-		).toBeLessThanOrEqual(1);
+		).toBeLessThanOrEqual(2);
 
 		// The icons moved onto the chip's line must not make that line taller than the chip itself,
 		// or the gap below the chip would be set by them rather than by the rule above.

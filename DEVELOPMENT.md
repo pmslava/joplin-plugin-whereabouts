@@ -204,6 +204,14 @@ Three things here are load-bearing and easy to break:
      ink-free rows (`e2e/ink.ts`) — two independent methods, so a shared mistake shows up as a
      failure rather than as agreement.
 
+     The descender depth is the FONT's, measured once from the reference string `gjpqy` and cached
+     per computed font — not the current title's own ink. Measuring the real title would be exact
+     for every note, but the chip would then move as the title is edited: type a "g" and it drops a
+     pixel. A constant reference makes the chip's position a property of the theme alone, at the
+     cost of up to ~2px of asymmetry on a title with no descenders. That is why the E2E's placement
+     fixtures use a title that HAS a descender (`Note in Beta (g)`) — the case where the rule is
+     exact — and allow 2px.
+
      Symmetric padding on the chip cannot achieve any of this: padding is inside the host box, so it
      never touches either gap. The spacing that does is outside the box, and how much is already
      there depends on the title row's `align-items: center` and on the editor container, i.e. on the

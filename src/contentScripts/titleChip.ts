@@ -242,21 +242,23 @@ class TitleChip {
 	}
 
 	/**
-	 * Where the note title's GLYPHS actually end, in viewport coordinates.
-	 *
-	 * NOT `input.getBoundingClientRect().bottom`. Joplin's title input carries 5px of its own bottom
-	 * padding and is 38px tall around a ~23px line box, so its border-box bottom sits roughly 12px
-	 * BELOW the last inked pixel of the title. Spacing measured from the box is therefore invisible
-	 * to the reader: it looked balanced in the DOM while the eye saw ~11px of air above the chip and
-	 * ~4px below it. The rule is about ink, so this is measured in ink.
-	 *
-	 * Canvas text metrics give the ink extent directly. The baseline is derived the way Chromium lays
-	 * a single-line input out: one line box, centred in the content box. `actualBoundingBoxDescent`
-	 * is the CURRENT title's ink below that baseline (0 for "Note in Beta", more for a descender), so
-	 * the chip tracks the text it is actually sitting under. Returns null when metrics are
-	 * unavailable, and the caller falls back to the box edge.
+	 * Font ink metrics, cached per computed font. Recomputed only when the font string changes —
+	 * a theme or font-size setting — never per keystroke.
 	 */
-	private titleInkBottom(input: HTMLInputElement): number | null {
+	private fontMetrics: { font: string; ascent: number; descent: number; inkDescent: number } | null = null;
+
+	/**
+	 * How far the title font's descenders reach below the baseline, for a FIXED reference string.
+	 *
+	 * Deliberately not the current title's own ink. Measuring the real string would be exact for
+	 * every title, but it would also move the chip as the title is edited — type a "g" and the chip
+	 * drops a pixel. A constant reference makes the chip's position a property of the theme alone.
+	 * The cost is up to ~2px of asymmetry on a title with no descenders, which is invisible next to
+	 * a chip that twitches while you type.
+	 */
+	private titleFontMetrics(font: string): { ascent: number; descent: number; inkDescent: number } | null {
+		if (this.fontMetrics && this.fontMetrics.font === font) return this.fontMetrics;
+
 		let ctx: CanvasRenderingContext2D | null = null;
 		try {
 			ctx = this.ownerDoc.createElement('canvas').getContext('2d');
@@ -265,9 +267,10 @@ class TitleChip {
 		}
 		if (!ctx) return null;
 
-		const cs = this.ownerWin.getComputedStyle(input);
-		ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-		const metrics = ctx.measureText(input.value || 'X');
+		ctx.font = font;
+		// A reference string of pure descenders, so the value is the font's real descender depth
+		// rather than whatever the current note happens to be called.
+		const metrics = ctx.measureText('gjpqy');
 		const ascent = metrics.fontBoundingBoxAscent;
 		const descent = metrics.fontBoundingBoxDescent;
 		const inkDescent = metrics.actualBoundingBoxDescent;
@@ -275,6 +278,30 @@ class TitleChip {
 			(n) => typeof n === 'number' && Number.isFinite(n),
 		);
 		if (!usable) return null;
+
+		this.fontMetrics = { font, ascent, descent, inkDescent };
+		return this.fontMetrics;
+	}
+
+	/**
+	 * Where the note title's GLYPHS end, in viewport coordinates.
+	 *
+	 * NOT `input.getBoundingClientRect().bottom`. Joplin's title input carries 5px of its own bottom
+	 * padding and is 38px tall around a ~23px line box, so its border-box bottom sits roughly 12px
+	 * BELOW the last inked pixel of the title. Spacing measured from the box is therefore invisible
+	 * to the reader: it looked balanced in the DOM while the eye saw ~11px of air above the chip and
+	 * ~4px below it. The rule is about ink, so this is measured in ink.
+	 *
+	 * The baseline is derived the way Chromium lays a single-line input out: one line box, centred
+	 * in the content box. The descender depth added to it is the font's, not this title's — see
+	 * titleFontMetrics(). Returns null when metrics are unavailable, and the caller falls back to
+	 * the box edge.
+	 */
+	private titleInkBottom(input: HTMLInputElement): number | null {
+		const cs = this.ownerWin.getComputedStyle(input);
+		const font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+		const metrics = this.titleFontMetrics(font);
+		if (!metrics) return null;
 
 		const rect = input.getBoundingClientRect();
 		const borderTop = parseFloat(cs.borderTopWidth) || 0;
@@ -284,9 +311,9 @@ class TitleChip {
 		const contentTop = rect.top + borderTop + padTop;
 		const contentHeight = rect.height - borderTop - borderBottom - padTop - padBottom;
 
-		const lineBox = ascent + descent;
-		const baseline = contentTop + Math.max(0, (contentHeight - lineBox) / 2) + ascent;
-		return baseline + inkDescent;
+		const lineBox = metrics.ascent + metrics.descent;
+		const baseline = contentTop + Math.max(0, (contentHeight - lineBox) / 2) + metrics.ascent;
+		return baseline + metrics.inkDescent;
 	}
 
 	/**

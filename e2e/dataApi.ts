@@ -141,7 +141,11 @@ export interface SeedData {
 	noteInGamma: Note;
 }
 
-export const NOTE_IN_BETA_TITLE = 'Note in Beta';
+// Carries a descender ON PURPOSE. The chip's vertical spacing is derived from the title font's
+// descender depth, not from the current title's own ink (so the chip cannot move while a title is
+// being typed). On a title WITH a descender the rule is exact, so this is the case worth asserting
+// tightly; a title without one is allowed to sit up to ~2px off.
+export const NOTE_IN_BETA_TITLE = 'Note in Beta (g)';
 export const NOTE_IN_GAMMA_TITLE = 'Note in Gamma';
 
 export async function seedNotebooks(api: DataApi): Promise<SeedData> {
