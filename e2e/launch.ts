@@ -87,6 +87,24 @@ export function createProfile(loadPlugin = true, seed: SeedSettings = {}): strin
     // default body editor. Pin it explicitly: with the Rich Text editor selected there is no
     // CodeMirror instance in the window, so no content script runs and no chip can exist.
     'editor.codeView': true,
+    // Joplin's built-in DARK theme, for the whole suite.
+    //
+    // The four docs/images screenshots are captured by e2e/placement.spec.ts from this very profile
+    // and are what the README and the plugin manifest show, so the suite's theme IS the project's
+    // published look — and Slava's site and READMEs are dark. Setting.THEME_DARK = 2 (verified in
+    // the shipped 3.7.14 bundle, alongside THEME_LIGHT = 1).
+    //
+    // `themeAutoDetect` MUST be turned off with it. It defaults to true, and while it is on Joplin
+    // follows the OS colour scheme and ignores `theme` entirely — under Xvfb that resolves to light,
+    // so seeding `theme` alone would silently do nothing. (Same pairing as the sibling Ridgeline
+    // repo's showcase spec, which hit this first.)
+    //
+    // Nothing in the suite assumes a light palette: the ink scan (e2e/ink.ts) samples the actual
+    // background from the capture's top-right corner and measures difference from it, so it is
+    // theme-agnostic by construction. Keep it that way — if an assertion ever needs a colour, make
+    // the assertion theme-agnostic rather than putting the suite back on light.
+    'themeAutoDetect': false,
+    'theme': 2,
     // Joplin's own REST API, used only to seed test data. Bound to localhost by Joplin itself.
     'clipperServer.autoStart': true,
     'api.token': crypto.randomBytes(32).toString('hex'),
