@@ -6,6 +6,25 @@ All notable changes to Whereabouts are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-03
+
+### Changed
+
+- **Right-click to move now works in a secondary editor window** (Note → Open in new window). It was
+  disabled there along with the other two actions, which was over-cautious: `moveToFolder` moves by
+  explicit note id and touches no selection, and a secondary window mounts its own dialogs — so the
+  picker opens in the window you right-clicked in and files the note that window is showing. Filing
+  a note you have opened in its own window is exactly when you want to.
+
+  The click actions stay disabled there, because they are navigation: selecting a notebook and
+  revealing a note act on the sidebar and note list in the main window. The chip now says which is
+  which — its tooltip reads "Right-click to move · click actions work in the main window" and its
+  cursor shows a menu rather than a link, instead of the chip looking uniformly dead.
+
+  The existing guards are unchanged: conflict notes, notes in the trash and notes in a read-only
+  share stay fully inert everywhere.
+
+
 ## [0.2.0] — 2026-09-03
 
 Placements rework, after 0.1.0 was used on a real profile.
@@ -98,5 +117,6 @@ First working version. Not yet published to the Joplin plugin repository.
 - Failed actions are reported to the console with a `[whereabouts]` prefix rather than silently
   doing nothing.
 
-[Unreleased]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pmslava/joplin-plugin-whereabouts/releases/tag/v0.2.0

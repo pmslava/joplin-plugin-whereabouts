@@ -100,8 +100,10 @@ These are structural, not bugs to be fixed later:
   bar and break the chip; if that happens the plugin fails visibly (no chip) rather than quietly
   corrupting anything.
 - **In a secondary editor window** (Note → Open in new window) the chip shows that window's own
-  notebook correctly, but it is not clickable: the sidebar and note list its actions drive live in
-  the main window.
+  notebook correctly, and **right-click to move still works** — the picker opens in that window and
+  files the note you are looking at. The *click* actions are disabled there: selecting a notebook and
+  revealing a note are navigation, and they drive the sidebar and note list that live in the main
+  window. The chip's tooltip says so, and its cursor shows a menu rather than a link.
 - **Conflict notes, notes in the trash, and notes in a read-only share** show their location but are
   likewise inert — filtering to, revealing in, or moving out of those would not do what you meant,
   and Joplin would reject the move.

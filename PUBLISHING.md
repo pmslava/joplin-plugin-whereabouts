@@ -219,7 +219,7 @@ nothing is written to the registry. What it does prove is the OIDC path — the 
 npm will present"** step should print:
 
 ```
-token exchange for joplin-plugin-whereabouts: HTTP 200
+token exchange for joplin-plugin-whereabouts: HTTP 201
 registry says:  (exchange succeeded)
 ```
 
