@@ -9,7 +9,9 @@ export const CONTENT_SCRIPT_ID = 'whereabouts-title-chip';
 
 /**
  * Command the content script self-registers so the plugin can tell the editor "something changed,
- * ask me again", via `joplin.commands.execute('editor.execCommand', { name })`.
+ * ask me again", via `joplin.commands.execute('editor.execCommand', { name })`. It takes one
+ * optional argument, a nonce, which the editor echoes back on the request it then makes — see
+ * `handOverToMainWindow` in index.ts, which uses that echo to identify WHICH window answered.
  *
  * It is a PING, not a state push. The plugin process cannot know which note a given editor holds —
  * `joplin.workspace.selectedNote()` reads the root redux state, and Joplin's WINDOW_FOCUS reducer
@@ -99,12 +101,15 @@ export type ContentScriptMessage =
 	// only when the facet is unavailable, in which case the plugin falls back to the selected note.
 	// `secondary` says which kind of window the asking editor is in. The plugin cannot work that out
 	// for itself — it has no window identity at all — and it needs it twice over:
-	//  - on `getState`, to learn which note the MAIN window's editor is holding, which is what lets
-	//    it tell whether Joplin's root state currently belongs to the main window;
+	//  - on `getState`, because a reply from a MAIN-window editor to a plugin ping is the plugin's
+	//    only evidence that Joplin is currently routing editor commands to the main window, which is
+	//    the same thing as saying the main window has focus and therefore owns the root state;
 	//  - on `action`, because from a secondary window `filter` and `reveal` must hand focus to the
 	//    main window before they run, or they would navigate the detached window instead.
 	// Both are `handOverToMainWindow` in index.ts.
-	| { type: 'getState'; noteId?: string; secondary: boolean }
+	// `nonce` is set only when this request was triggered by a REFRESH_COMMAND ping and echoes that
+	// ping's id, so the plugin can tell an answer to ITS ping from an editor's own scheduled poll.
+	| { type: 'getState'; noteId?: string; secondary: boolean; nonce?: string }
 	| { type: 'action'; action: ChipAction; noteId: string; folderId: string; secondary: boolean };
 
 /** What the plugin answers an `action` message with, so the content script can report a failure. */

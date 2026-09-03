@@ -87,6 +87,22 @@ class TitleChip {
 	private observedTargets: Node[] = [];
 	private syncScheduled = false;
 	private clickTimer: number | null = null;
+	/**
+	 * True while an action is with the plugin and has not answered yet.
+	 *
+	 * An action from a secondary window is no longer instantaneous — it hands focus to the main
+	 * window and waits for evidence that the hand-off took, which can take a second or two — so a
+	 * user can easily click again while one is in flight. Without this guard the second gesture
+	 * would start a second hand-off (a second `focusElementSideBar`, a second `openNote`) racing the
+	 * first, and the chip would look like it was doing something different every time. Overlapping
+	 * gestures are therefore DROPPED, not queued: the click that is already running is the one the
+	 * user asked for first, and repeating it changes nothing.
+	 *
+	 * The one interaction that is not a drop is the existing single/double split: a double click
+	 * still cancels a single click that is only PENDING (its debounce timer has not fired), because
+	 * that one has not been sent anywhere yet.
+	 */
+	private actionInFlight = false;
 	private state: ChipState = emptyState();
 	private renderedSignature = '';
 	private destroyed = false;
@@ -107,6 +123,10 @@ class TitleChip {
 	 *    `WindowCommandsAndDialogs` — so its folder picker opens in the window the user right-clicked
 	 *    in, and the move applies to the note that window is showing.
 	 *
+	 * It is used in three places: it rides along on every message so the plugin knows which window
+	 * is speaking, it gives up the chip's DOM focus before a navigation action (see `dispatch`), and
+	 * it is published on the host as `data-secondary` so the detection itself can be asserted.
+	 *
 	 * `document` is the main window's document even for this editor — Joplin appends the content
 	 * script there — which is exactly what makes the comparison a reliable signal.
 	 */
@@ -119,7 +139,7 @@ class TitleChip {
 	 */
 	public static create(
 		view: EditorView,
-		onAction: (action: ChipAction, state: ChipState) => void,
+		onAction: (action: ChipAction, state: ChipState) => Promise<void>,
 	): TitleChip | null {
 		const root = view.dom.closest('.note-editor-wrapper') as HTMLElement | null;
 		if (!root) return null;
@@ -129,7 +149,7 @@ class TitleChip {
 	private constructor(
 		private readonly view: EditorView,
 		root: HTMLElement,
-		private readonly onAction: (action: ChipAction, state: ChipState) => void,
+		private readonly onAction: (action: ChipAction, state: ChipState) => Promise<void>,
 	) {
 		this.ownerDoc = view.dom.ownerDocument;
 		this.ownerWin = this.ownerDoc.defaultView ?? window;
@@ -167,12 +187,12 @@ class TitleChip {
 	private attachHandlers(): void {
 		this.button.addEventListener('click', (event: MouseEvent) => {
 			event.preventDefault();
-			if (!this.canAct('filter')) return;
+			if (!this.canAct()) return;
 			// Defer: a double click also emits two `click` events, and reveal must win over filter.
 			if (this.clickTimer !== null) this.ownerWin.clearTimeout(this.clickTimer);
 			this.clickTimer = this.ownerWin.setTimeout(() => {
 				this.clickTimer = null;
-				this.onAction('filter', this.state);
+				this.dispatch('filter');
 			}, DOUBLE_CLICK_MS);
 		});
 
@@ -182,15 +202,35 @@ class TitleChip {
 				this.ownerWin.clearTimeout(this.clickTimer);
 				this.clickTimer = null;
 			}
-			if (!this.canAct('reveal')) return;
-			this.onAction('reveal', this.state);
+			if (!this.canAct()) return;
+			this.dispatch('reveal');
 		});
 
 		this.button.addEventListener('contextmenu', (event: MouseEvent) => {
 			// Without this the app's own context menu opens on top of the folder picker.
 			event.preventDefault();
-			if (!this.canAct('move')) return;
-			this.onAction('move', this.state);
+			if (!this.canAct()) return;
+			this.dispatch('move');
+		});
+	}
+
+	/**
+	 * Send one action to the plugin, at most one at a time. See `actionInFlight`.
+	 *
+	 * A NAVIGATION action from a secondary window also gives up the chip's DOM focus first. That is
+	 * not cosmetic: Joplin routes `editor.execCommand` to the editor whose document has focus, and
+	 * scores an editor higher when its own container holds the focused element
+	 * (`gui/NoteEditor/utils/getWindowCommandPriority.ts`). Leaving focus parked on a button inside
+	 * this window's editor column would therefore make THIS window keep claiming editor commands —
+	 * including the refresh ping the plugin is about to use to prove that the main window took over.
+	 * The click is also, by its own meaning, a request to go and look at the other window.
+	 */
+	private dispatch(action: ChipAction): void {
+		if (this.actionInFlight) return;
+		if (this.inSecondaryWindow && action !== 'move') this.button.blur();
+		this.actionInFlight = true;
+		void this.onAction(action, this.state).finally(() => {
+			this.actionInFlight = false;
 		});
 	}
 
@@ -208,7 +248,7 @@ class TitleChip {
 		return 'all';
 	}
 
-	private canAct(_action: ChipAction): boolean {
+	private canAct(): boolean {
 		return this.actionMode() !== 'none';
 	}
 
@@ -589,6 +629,7 @@ class TitleChip {
 			this.actionMode(),
 			this.state.noteId,
 			this.state.folderId,
+			String(this.inSecondaryWindow),
 		].join('|');
 		if (signature !== this.renderedSignature) {
 			this.renderedSignature = signature;
@@ -597,6 +638,11 @@ class TitleChip {
 			// E2E suite assert WHICH note/notebook the chip is currently speaking for.
 			this.host.dataset.noteId = this.state.noteId;
 			this.host.dataset.folderId = this.state.folderId;
+			// Which window this chip is in. Nothing renders from it — it exists so the fact can be
+			// asserted from outside: the whole secondary-window behaviour is keyed off this flag, and
+			// a test that could not read it would be asserting against a chip that might silently
+			// have decided it was in the main window all along.
+			this.host.dataset.secondary = String(this.inSecondaryWindow);
 
 			// In the editor toolbar the chip must BE a native toolbar button, so it inherits Joplin's
 			// own sizing, hover and theme colours instead of approximating them. `-has-title` is what
@@ -676,8 +722,9 @@ export default (context: ContentScriptContext): MarkdownEditorContentScriptModul
 		let chip: TitleChip | null = TitleChip.create(view, (action, state) => {
 			// Report failures rather than swallowing them: openNote throws if the note or its parent
 			// notebook has vanished, and moveToFolder throws on an id it cannot load. A dead-feeling
-			// button with nothing in the console is the worst of both worlds.
-			void context
+			// button with nothing in the console is the worst of both worlds. The promise is also the
+			// chip's in-flight signal, so it must resolve exactly when the plugin has finished.
+			return context
 				.postMessage({
 					type: 'action',
 					action,
@@ -741,19 +788,21 @@ export default (context: ContentScriptContext): MarkdownEditorContentScriptModul
 			chip.setState(state);
 		};
 
-		const requestState = (): void => {
+		const requestState = (nonce?: string): void => {
 			if (destroyed) return;
 			const seq = ++requestSeq;
 			void (async () => {
 				let state: ChipState | null = null;
 				try {
 					// `secondary` rides along on every request, not just on actions: it is how the plugin
-					// learns which note the MAIN window's editor holds, which is the fact it needs to
-					// tell whose state Joplin currently has at the root. See handOverToMainWindow().
+					// knows which window a reply came from. `nonce` is set only when this request was
+					// triggered by a plugin ping, and echoes that ping's id back. Together they are the
+					// evidence handOverToMainWindow() waits for.
 					state = (await context.postMessage({
 						type: 'getState',
 						noteId: currentNoteId(),
 						secondary: inSecondaryWindow,
+						nonce,
 					})) as ChipState | null;
 				} catch (error) {
 					return; // transient; the poll comes round again
@@ -790,9 +839,15 @@ export default (context: ContentScriptContext): MarkdownEditorContentScriptModul
 		// Live refresh PING from the plugin: fires on note selection, note change (which is what a
 		// move emits), sync completion and settings changes — but only for the FOCUSED window's
 		// editor. It carries no state: only this editor knows which note it holds, so it re-asks.
-		editorControl.registerCommand(REFRESH_COMMAND, () => {
+		// The ping carries an optional NONCE, which the reply echoes back. That is what turns "the
+		// plugin asked someone to refresh" into "the plugin can tell WHICH window answered": the
+		// plugin sends a nonce nobody else has, and a reply bearing it can only have come from the
+		// editor `editor.execCommand` routed to — i.e. the focused window's. Without it a reply is
+		// ambiguous, because every editor also polls on its own schedule and one of those ordinary
+		// replies could land inside the same time window and be mistaken for an answer to the ping.
+		editorControl.registerCommand(REFRESH_COMMAND, (nonce?: string) => {
 			resetPollPace();
-			requestState();
+			requestState(typeof nonce === 'string' ? nonce : undefined);
 		});
 
 		const updateListener = EditorView.updateListener.of((update: ViewUpdate) => {
