@@ -59,7 +59,16 @@ before changing them:
 3. **Only three insertion slots are used** (direct child of `.note-title-wrapper`, direct child of
    `.editor-toolbar`, or the immediate next sibling of `.note-title-wrapper`), the insert is
    idempotent, and a `MutationObserver` repairs it. React re-renders the title bar on every note
-   switch and at the 800px width breakpoint; without this the chip vanishes.
+   switch, and mounts/unmounts its own "In: \<Notebook\>" pill — our neighbour in the below-title
+   slot — as the view changes; without the repair the chip vanishes. The observer watches the title
+   area only, with `childList` and **no** `subtree`: watching the editor column would wake it on
+   every keystroke. (The 800px layout change is *not* a reason for it — that is a plain CSS media
+   query in `note-title-wrapper.scss`, with no React involvement.)
+4. **The editor tells the plugin which note it holds**, taken from CodeMirror's `noteIdFacet`. The
+   plugin cannot work it out for itself: `joplin.workspace.selectedNote()` reads the root redux
+   state, and Joplin's `WINDOW_FOCUS` reducer swaps the focused window's state into root, so it
+   answers for whichever window has focus. With a secondary editor window open, a plugin-side guess
+   would give both chips the focused window's notebook.
 
 ## End-to-end tests
 

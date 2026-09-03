@@ -44,8 +44,11 @@ html.whereabouts-hide-native
 
 /*
  * below-title: the native pill's exact slot — a row of its own between the title bar and the
- * editor. The padding mirrors renderSearchInfo()'s inline style (10px vertical, editor padding on
- * the left) so the chip lines up with the note text below it.
+ * editor. The LEFT padding is core's own --joplin-editor-padding-left, matching renderSearchInfo(),
+ * so the chip lines up with the note text below it. The VERTICAL padding is deliberately 6px rather
+ * than core's 10px: Joplin's pill appears only in search results, where a taller band reads as a
+ * banner, whereas this chip is on screen for every note and 10px above and below cost noticeable
+ * editor height for no gain.
  */
 .whereabouts-host[data-placement='below-title'] {
 	padding: 6px 0 6px var(--joplin-editor-padding-left);
@@ -82,7 +85,12 @@ html.whereabouts-hide-native
 	background-color: var(--joplin-background-color3);
 	color: var(--joplin-color);
 	font-family: var(--joplin-font-family);
-	font-size: var(--joplin-font-size-small);
+	/*
+	 * NOT --joplin-font-size-small: despite being referenced in a couple of core stylesheets, that
+	 * variable is never emitted by themeToCss in 3.7.14 (verified against the shipped bundle), so it
+	 * resolves to nothing and the declaration is dropped. Derive from the one that does exist.
+	 */
+	font-size: calc(var(--joplin-font-size) * 0.9);
 	line-height: 1.4;
 	cursor: pointer;
 	white-space: nowrap;
@@ -120,17 +128,39 @@ html.whereabouts-hide-native
 }
 
 /*
- * In the note toolbar the chip carries Joplin's own `toolbar-button -has-title` classes, so core
- * already gives it the right height, hover and colours. Undo only the pill-specific decoration.
+ * In the note toolbar the chip carries Joplin's own `toolbar-button -has-title` classes so it
+ * inherits core's height, hover and colours. But this stylesheet is linked AFTER core's, and the
+ * .whereabouts-chip rules above have equal specificity, so they would win every property they
+ * declare and leave the chip visibly taller and differently padded from its neighbours. Hand each
+ * of those properties back to core explicitly — this block is what makes the chip match the buttons
+ * beside it, and placement.spec.ts asserts the computed padding and cursor against a real sibling
+ * toolbar button.
  */
 .whereabouts-host[data-placement='toolbar-first'] .whereabouts-chip {
+	/* Core .toolbar-button: display flex, padding 0 5px, cursor default, no border/background. */
+	display: flex;
+	padding: 0 5px;
+	cursor: default;
+	line-height: normal;
 	border: none;
 	background-color: transparent;
 	border-radius: 3px;
+	font-size: calc(var(--joplin-toolbar-icon-size) * 0.8);
+	color: var(--joplin-color3);
+	height: var(--joplin-toolbar-height);
+	min-height: var(--joplin-toolbar-height);
+	box-sizing: border-box;
 }
 
 .whereabouts-host[data-placement='toolbar-first'] .whereabouts-chip:hover {
 	background-color: var(--joplin-background-color-hover3);
+}
+
+/* Core sizes the toolbar glyph itself; do not fight it with the pill's own icon rules. */
+.whereabouts-host[data-placement='toolbar-first'] .whereabouts-icon {
+	font-size: 16px;
+	color: inherit;
+	margin-right: 5px;
 }
 
 /* Conflict notes, notes in the trash, and secondary editor windows: shown, but not clickable. */

@@ -36,8 +36,13 @@ First working version. Not yet published to the Joplin plugin repository.
   has no CodeMirror instance, so no plugin code runs there and no chip appears.
 - The chip is injected into Joplin's internal title-bar DOM, which has no plugin API. Selectors are
   verified against Joplin 3.7.x and `app_min_version` is pinned to `3.7`.
-- In a secondary editor window, and for conflict notes and notes in the trash, the chip shows the
-  location but its click actions are disabled.
+- Each editor reports its own notebook, including a secondary editor window: the editor tells the
+  plugin which note it holds (via CodeMirror's noteId facet) rather than the plugin guessing from
+  the selected note, which follows window focus.
+- In a secondary editor window, and for conflict notes, notes in the trash and notes in a read-only
+  share, the chip shows the location but its click actions are disabled.
+- Disabling the plugin leaves the chip in place until Joplin is restarted: there is no unload hook
+  for a mounted editor extension and no API to drop a loaded chrome stylesheet.
 - `revealInNotebook` (core PR laurent22/joplin#16354) is feature-detected: once it ships, double
   click uses it; until then it falls back to `openNote` + `focusElementNoteList`.
 

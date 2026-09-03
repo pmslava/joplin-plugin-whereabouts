@@ -8,8 +8,13 @@ export const PLUGIN_ID = 'io.github.pmslava.whereabouts';
 export const CONTENT_SCRIPT_ID = 'whereabouts-title-chip';
 
 /**
- * Command the content script self-registers so the plugin can push a fresh state into the editor
- * with `joplin.commands.execute('editor.execCommand', { name, args })`.
+ * Command the content script self-registers so the plugin can tell the editor "something changed,
+ * ask me again", via `joplin.commands.execute('editor.execCommand', { name })`.
+ *
+ * It is a PING, not a state push. The plugin process cannot know which note a given editor holds —
+ * `joplin.workspace.selectedNote()` reads the root redux state, and Joplin's WINDOW_FOCUS reducer
+ * swaps the focused window's state into root, so it answers for whichever window has focus. Only
+ * the editor itself knows its own note (from `noteIdFacet`), so the editor must be the one to ask.
  */
 export const REFRESH_COMMAND = 'whereabouts.refresh';
 
@@ -59,8 +64,10 @@ export interface ChipState {
 	/** Notebook titles root-first, e.g. ['Lab', 'Joplin']. Empty means "nothing to show". */
 	path: string[];
 	/**
-	 * False for conflict notes and notes in the trash: the chip still shows where the note sits,
-	 * but filtering/revealing/moving it would be wrong or would fail, so clicks are inert.
+	 * False when acting on the note would be wrong or would fail: a conflict note (it lives in the
+	 * "Conflicts" notebook, which the chip happily names, but filtering/moving out of it is not
+	 * meaningful), a note in the trash, or a note in a read-only share. The chip still shows the
+	 * location; only the clicks go inert.
 	 */
 	actionable: boolean;
 }
@@ -68,8 +75,17 @@ export interface ChipState {
 export type ChipAction = 'filter' | 'reveal' | 'move';
 
 export type ContentScriptMessage =
-	| { type: 'getState' }
+	// `noteId` is the id THIS editor holds, taken from the CodeMirror noteId facet. It is what makes
+	// a secondary editor window show its own notebook instead of the focused window's. It is omitted
+	// only when the facet is unavailable, in which case the plugin falls back to the selected note.
+	| { type: 'getState'; noteId?: string }
 	| { type: 'action'; action: ChipAction; noteId: string; folderId: string };
+
+/** What the plugin answers an `action` message with, so the content script can report a failure. */
+export interface ActionResult {
+	ok: boolean;
+	error?: string;
+}
 
 /** Render the chip's label from a state. Pure, so both sides agree and it is trivially testable. */
 export function chipLabel(state: ChipState): string {

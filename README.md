@@ -65,10 +65,16 @@ These are structural, not bugs to be fixed later:
   **Joplin 3.7.x** (`app_min_version: "3.7"`). A future Joplin could rename or restructure the title
   bar and break the chip; if that happens the plugin fails visibly (no chip) rather than quietly
   corrupting anything.
-- **In a secondary editor window** (Note → Open in new window) the chip shows the location but is not
-  clickable, because the sidebar and note list it would act on live in the main window.
-- **Conflict notes and notes in the trash** show their location but are likewise inert — filtering to
-  or moving out of those pseudo-locations would not do what you meant.
+- **In a secondary editor window** (Note → Open in new window) the chip shows that window's own
+  notebook correctly, but it is not clickable: the sidebar and note list its actions drive live in
+  the main window.
+- **Conflict notes, notes in the trash, and notes in a read-only share** show their location but are
+  likewise inert — filtering to, revealing in, or moving out of those would not do what you meant,
+  and Joplin would reject the move.
+- **Turning the plugin off does not remove the chip until you restart Joplin.** Joplin gives a
+  plugin no unload hook for an already-mounted editor extension, and no way to drop a chrome
+  stylesheet it has loaded, so the chip, its refresh poll and the native-pill hide rule all survive
+  until the next launch.
 
 ## Development
 

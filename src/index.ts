@@ -11,6 +11,7 @@ import {
 	SETTING_SHOW_ICON,
 	coerceSettings,
 	emptyState,
+	type ActionResult,
 	type ChipState,
 	type ContentScriptMessage,
 	type WhereaboutsSettings,
@@ -21,14 +22,35 @@ const SETTINGS_SECTION = 'whereabouts.settings';
 // A corrupted parent_id chain must not loop forever while walking to the root.
 const MAX_NOTEBOOK_DEPTH = 100;
 
-// Fields we need to decide whether the chip may act on a note.
-const NOTE_FIELDS = ['id', 'parent_id', 'is_conflict', 'deleted_time'];
+// Fields we need to decide whether the chip may act on a note. `share_id` feeds the read-only-share
+// check below.
+const NOTE_FIELDS = ['id', 'parent_id', 'is_conflict', 'deleted_time', 'share_id'];
+
+/**
+ * How long a resolved notebook path may be reused before it is walked again.
+ *
+ * Renaming a notebook fires NO plugin event, so the only way the chip can notice one is to re-read.
+ * The editors poll for exactly that reason, and this TTL is what keeps the poll from turning into a
+ * folder walk per editor per tick: within the window every editor is answered from memory.
+ */
+const FOLDER_PATH_TTL_MS = 10_000;
+
+// Sync targets that are Joplin Server / Joplin Cloud, the only ones where sharing (and therefore a
+// read-only share) exists. Mirrors core's `joplinServerConnected` when-clause.
+const SHARING_SYNC_TARGETS = [9, 10, 11];
 
 interface GuardedNote {
 	id: string;
 	parent_id: string;
 	is_conflict: number;
 	deleted_time: number;
+	share_id: string;
+}
+
+/** The shape of the `sync.shareCache` global setting that core's read-only check reads. */
+interface ShareCache {
+	shares: Array<{ id: string; user?: { id?: string } }>;
+	shareInvitations: Array<{ share: { id: string }; can_write: number | boolean }>;
 }
 
 async function registerSettings(): Promise<void> {
@@ -121,7 +143,7 @@ async function readSettings(): Promise<WhereaboutsSettings> {
  * Same shape as the helper in joplin-plugin-copy-note-id; kept local so the two plugins stay
  * independent.
  */
-async function notebookTitlePath(folderId: string): Promise<string[]> {
+async function walkNotebookTitlePath(folderId: string): Promise<string[]> {
 	const titles: string[] = [];
 	let id = folderId;
 	for (let hop = 0; hop < MAX_NOTEBOOK_DEPTH && id; hop++) {
@@ -136,6 +158,69 @@ async function notebookTitlePath(folderId: string): Promise<string[]> {
 		id = folder.parent_id;
 	}
 	return titles;
+}
+
+/**
+ * Memoised notebook paths.
+ *
+ * Every mounted editor polls (see the content script), and a path is a walk of one API call per
+ * ancestor, so without this a deep notebook would cost N reads per editor per tick forever. Entries
+ * expire after FOLDER_PATH_TTL_MS so a RENAME still shows up on its own — that is the one change no
+ * plugin event reports — and `invalidateFolderPaths()` drops them immediately on the events that DO
+ * fire (a note changed, a sync landed), so a move or a synced rename is reflected at once.
+ */
+const folderPathCache = new Map<string, { path: string[]; readAt: number }>();
+
+function invalidateFolderPaths(): void {
+	folderPathCache.clear();
+}
+
+async function notebookTitlePath(folderId: string): Promise<string[]> {
+	const cached = folderPathCache.get(folderId);
+	if (cached && Date.now() - cached.readAt < FOLDER_PATH_TTL_MS) return cached.path;
+	const path = await walkNotebookTitlePath(folderId);
+	folderPathCache.set(folderId, { path, readAt: Date.now() });
+	return path;
+}
+
+/**
+ * Core's `noteIsReadOnlyShare` when-clause, reimplemented from the inputs a plugin can reach.
+ *
+ * `moveToFolder` declares `enabledCondition: 'someNotesSelected && !noteIsReadOnlyShare'`, but
+ * CommandService does NOT evaluate enabledCondition for plugin-initiated calls — so offering "move"
+ * on a note shared with us read-only would push the user into a picker whose result the sync layer
+ * then rejects. Mirrors `itemIsReadOnlySync` in @joplin/lib/models/utils/readOnly: a note is
+ * read-only when it belongs to a share we do not own and our invitation to that share has no write
+ * permission. Anything we cannot determine resolves to "writable", so the guard never silently
+ * disables the chip on a normal local note.
+ */
+async function noteIsReadOnlyShare(note: GuardedNote): Promise<boolean> {
+	if (!note.share_id) return false;
+	try {
+		const [syncTarget, userId, rawCache] = await joplin.settings.globalValues([
+			'sync.target',
+			'sync.userId',
+			'sync.shareCache',
+		]);
+		if (!SHARING_SYNC_TARGETS.includes(Number(syncTarget))) return false;
+		if (!userId) return false;
+		if (typeof rawCache !== 'string' || !rawCache) return false;
+
+		const cache = JSON.parse(rawCache) as ShareCache;
+		const invitations = cache?.shareInvitations ?? [];
+		// Core short-circuits the whole check when there are no invitations at all.
+		if (!invitations.length) return false;
+
+		const share = (cache?.shares ?? []).find((s) => s.id === note.share_id);
+		if (share && share.user && share.user.id === userId) return false; // we own it
+
+		const invitation = invitations.find((i) => i?.share?.id === note.share_id);
+		return invitation ? !invitation.can_write : false;
+	} catch (error) {
+		// A malformed cache or an unavailable setting must not make a normal note un-actionable.
+		console.warn('[whereabouts] could not evaluate share permissions; treating as writable', error);
+		return false;
+	}
 }
 
 /**
@@ -154,34 +239,52 @@ async function loadGuardedNote(noteId: string): Promise<GuardedNote | null> {
 
 /**
  * A note is "actionable" when filtering to its notebook, revealing it in the list, or moving it are
- * all meaningful. Conflict notes have no real parent notebook, and a note in the trash lives in a
- * pseudo-notebook the sidebar cannot select — acting on either would jump the user somewhere wrong.
+ * all meaningful. A conflict note does live in a real "Conflicts" notebook — the chip names it
+ * happily — but filtering or moving out of it is not what the click means; a note in the trash sits
+ * in a pseudo-notebook the sidebar cannot select; and a read-only share would reject the move.
  */
-function isActionable(note: GuardedNote | null): boolean {
+async function isActionable(note: GuardedNote | null): Promise<boolean> {
 	if (!note) return false;
 	if (!note.parent_id) return false;
 	if (note.is_conflict) return false;
 	if (note.deleted_time) return false;
+	if (await noteIsReadOnlyShare(note)) return false;
 	return true;
 }
 
-/** The state the chip renders: current note, its notebook path, and whether clicks may act. */
-async function buildState(): Promise<ChipState> {
+/**
+ * The state the chip renders: the note, its notebook path, and whether clicks may act.
+ *
+ * `noteId` is the note the ASKING EDITOR holds, and it matters. `joplin.workspace.selectedNote()`
+ * reads the ROOT redux state, and Joplin's WINDOW_FOCUS reducer swaps the focused window's state
+ * into root (app.reducer `handleWindowActions`), so it reports whichever window has focus — not the
+ * window that asked. With a secondary editor window open, trusting it would make BOTH chips name the
+ * focused window's notebook and make a click on the background chip act on the other window's note.
+ * The editor therefore supplies its own id from CodeMirror's noteId facet, and `selectedNote()` is
+ * only a fallback for a Joplin that does not expose that facet.
+ */
+async function buildState(noteId?: string): Promise<ChipState> {
 	const settings = await readSettings();
-	let selected;
-	try {
-		selected = await joplin.workspace.selectedNote();
-	} catch (error) {
-		selected = null;
-	}
-	if (!selected || !selected.id) return emptyState(settings);
 
-	const note = await loadGuardedNote(selected.id);
-	const folderId = note?.parent_id ?? '';
-	if (!folderId) return { settings, noteId: selected.id, folderId: '', path: [], actionable: false };
+	let id = typeof noteId === 'string' ? noteId : '';
+	if (!id) {
+		try {
+			const selected = await joplin.workspace.selectedNote();
+			id = selected?.id ?? '';
+		} catch (error) {
+			id = '';
+		}
+	}
+	if (!id) return emptyState(settings);
+
+	const note = await loadGuardedNote(id);
+	if (!note) return emptyState(settings);
+
+	const folderId = note.parent_id ?? '';
+	if (!folderId) return { settings, noteId: id, folderId: '', path: [], actionable: false };
 
 	const path = await notebookTitlePath(folderId);
-	return { settings, noteId: selected.id, folderId, path, actionable: isActionable(note) };
+	return { settings, noteId: id, folderId, path, actionable: await isActionable(note) };
 }
 
 /**
@@ -236,25 +339,41 @@ async function doMove(noteId: string): Promise<void> {
 /**
  * CommandService does NOT enforce a command's enabledCondition for plugin-initiated calls, so every
  * guard has to be applied here. Re-check the note at action time, not at render time.
+ *
+ * Failures are RETURNED, never thrown and never swallowed: `openNote` throws when the note or its
+ * parent notebook has vanished since the chip was drawn, and `moveToFolder` throws on an id it
+ * cannot load. The content script logs what comes back, so a broken action leaves a trace instead
+ * of looking like a dead button — and the user never gets a raw Electron error dialog.
  */
-async function handleAction(message: Extract<ContentScriptMessage, { type: 'action' }>): Promise<void> {
+async function handleAction(
+	message: Extract<ContentScriptMessage, { type: 'action' }>,
+): Promise<ActionResult> {
 	const note = await loadGuardedNote(message.noteId);
-	if (!isActionable(note)) return;
+	if (!note) return { ok: false, error: `note ${message.noteId} could not be loaded` };
+	if (!(await isActionable(note))) {
+		return { ok: false, error: `note ${note.id} is a conflict, trashed, or read-only note` };
+	}
 	// Act on the note's CURRENT parent, not the one the chip was drawn with.
 	const folderId = note.parent_id;
 
-	switch (message.action) {
-		case 'filter':
-			await doFilter(note.id, folderId);
-			break;
-		case 'reveal':
-			await doReveal(note.id);
-			break;
-		case 'move':
-			await doMove(note.id);
-			break;
-		default:
-			break;
+	try {
+		switch (message.action) {
+			case 'filter':
+				await doFilter(note.id, folderId);
+				return { ok: true };
+			case 'reveal':
+				await doReveal(note.id);
+				return { ok: true };
+			case 'move':
+				await doMove(note.id);
+				return { ok: true };
+			default:
+				return { ok: false, error: `unknown action ${String(message.action)}` };
+		}
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		console.warn(`[whereabouts] action "${message.action}" failed:`, error);
+		return { ok: false, error: detail };
 	}
 }
 
@@ -262,30 +381,26 @@ async function onContentScriptMessage(message: ContentScriptMessage): Promise<un
 	if (!message || typeof message !== 'object') return null;
 	switch (message.type) {
 		case 'getState':
-			return buildState();
+			return buildState(message.noteId);
 		case 'action':
-			await handleAction(message);
-			return { ok: true };
+			return handleAction(message);
 		default:
 			return null;
 	}
 }
 
 /**
- * Push a fresh state into the focused window's editor. `editor.execCommand` only reaches the FOCUSED
- * window's CodeMirror instance and throws when no Markdown editor is focused at all (Rich Text, or
- * the app still starting), so failures here are normal — the content script also polls, which is how
- * unfocused windows keep up.
+ * Nudge the focused window's editor to ask for its state again.
+ *
+ * Deliberately a PING with no payload: this process cannot tell which note the receiving editor
+ * holds (see buildState), so pushing a state would risk handing a window another window's notebook.
+ * `editor.execCommand` reaches only the FOCUSED window's CodeMirror instance and throws when no
+ * Markdown editor is focused at all (Rich Text, or the app still starting), so failures here are
+ * normal — every editor also polls, which is how unfocused windows keep up.
  */
-async function pushRefresh(): Promise<void> {
-	let state: ChipState;
+async function pingRefresh(): Promise<void> {
 	try {
-		state = await buildState();
-	} catch (error) {
-		return;
-	}
-	try {
-		await joplin.commands.execute('editor.execCommand', { name: REFRESH_COMMAND, args: [state] });
+		await joplin.commands.execute('editor.execCommand', { name: REFRESH_COMMAND });
 	} catch (error) {
 		// No focused Markdown editor. The poll in the content script covers it.
 	}
@@ -314,15 +429,22 @@ joplin.plugins.register({
 
 		// Selecting another note switches which notebook the chip must name.
 		await joplin.workspace.onNoteSelectionChange(async () => {
-			await pushRefresh();
+			await pingRefresh();
 		});
 		// onNoteChange also fires when the open note is MOVED to another notebook — that is the event
-		// that keeps the chip honest right after a right-click move.
+		// that keeps the chip honest right after a right-click move. A move can also mean the note now
+		// sits under a different ancestry, so drop the memoised paths with it.
 		await joplin.workspace.onNoteChange(async () => {
-			await pushRefresh();
+			invalidateFolderPaths();
+			await pingRefresh();
+		});
+		// A sync can rename or re-parent notebooks under us with no other notification.
+		await joplin.workspace.onSyncComplete(async () => {
+			invalidateFolderPaths();
+			await pingRefresh();
 		});
 		await joplin.settings.onChange(async () => {
-			await pushRefresh();
+			await pingRefresh();
 		});
 
 		console.info(`[whereabouts] ${PLUGIN_ID} started`);

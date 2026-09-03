@@ -29,20 +29,31 @@ import {
 	REFRESH_COMMAND,
 	chipLabel,
 	emptyState,
+	type ActionResult,
 	type ChipAction,
 	type ChipState,
 	type Placement,
 } from '../common';
 
 /**
- * How often an editor re-asks the plugin for its state.
+ * How often an editor re-asks the plugin for its state, and how far it backs off when nothing is
+ * happening.
  *
- * The plugin PUSHES a fresh state through `editor.execCommand`, but that only ever reaches the
- * FOCUSED window's editor. A secondary editor window, or the main window while a secondary one has
- * focus, would otherwise show a stale notebook forever. The poll is the backstop; it is cheap
- * because applying a state is a no-op unless the serialised state actually changed.
+ * Two things make the poll necessary. The plugin's refresh ping travels through
+ * `editor.execCommand`, which only ever reaches the FOCUSED window's editor — a secondary editor
+ * window, or the main window while a secondary one has focus, would otherwise sit stale. And
+ * renaming a notebook fires NO plugin event at all, so re-asking is the only way the chip ever
+ * notices a rename.
+ *
+ * It is kept cheap three ways: the plugin memoises notebook paths, a tick is skipped entirely while
+ * the document is hidden, and the interval grows to POLL_IDLE_MS after a run of identical answers
+ * (reset the moment anything actually changes). Steady state is therefore one message every few
+ * seconds per visible editor, answered from the plugin's cache.
  */
 const POLL_MS = 1200;
+const POLL_IDLE_MS = 5000;
+/** Identical answers in a row before the poll slows to POLL_IDLE_MS. */
+const POLL_IDLE_AFTER = 4;
 
 /**
  * How long a single click waits to see whether a second one is coming. Left click and double click
@@ -72,6 +83,7 @@ class TitleChip {
 	private readonly label: HTMLSpanElement;
 
 	private observer: MutationObserver | null = null;
+	private observedTargets: Node[] = [];
 	private syncScheduled = false;
 	private clickTimer: number | null = null;
 	private state: ChipState = emptyState();
@@ -79,22 +91,43 @@ class TitleChip {
 	private destroyed = false;
 
 	/**
-	 * True when this editor is in a secondary window. `openNote`, `focusElementNoteList` and
-	 * `moveToFolder` all act on the MAIN window's sidebar and note list, so firing them from a
-	 * detached editor window would move something the user cannot see. The chip still shows the
-	 * location there; it is just inert.
+	 * True when this editor is in a secondary window (Note -> Open in new window).
+	 *
+	 * This affects the CLICKS ONLY. The chip itself is fully correct there: the editor sends its own
+	 * note id with every state request, so a secondary window names its own notebook regardless of
+	 * which window has focus. But `openNote`, `focusElementNoteList` and `moveToFolder` all drive the
+	 * MAIN window's sidebar and note list, so firing them from a detached editor would rearrange
+	 * something the user is not looking at. The chip stays visible and goes inert.
+	 *
+	 * `document` is the main window's document even for this editor — Joplin appends the content
+	 * script there — which is exactly what makes the comparison a reliable signal.
 	 */
 	private readonly inSecondaryWindow: boolean;
 
-	public constructor(
+	/**
+	 * Build a chip for this editor, or return null when the editor is not inside a note-editor column
+	 * (nothing to attach to). Falling back to the document body was tempting and wrong: the observer
+	 * below would then watch the entire document.
+	 */
+	public static create(
+		view: EditorView,
+		onAction: (action: ChipAction, state: ChipState) => void,
+	): TitleChip | null {
+		const root = view.dom.closest('.note-editor-wrapper') as HTMLElement | null;
+		if (!root) return null;
+		return new TitleChip(view, root, onAction);
+	}
+
+	private constructor(
 		private readonly view: EditorView,
+		root: HTMLElement,
 		private readonly onAction: (action: ChipAction, state: ChipState) => void,
 	) {
 		this.ownerDoc = view.dom.ownerDocument;
 		this.ownerWin = this.ownerDoc.defaultView ?? window;
 		// `document` here is the main renderer window's document, whatever window this editor is in.
 		this.inSecondaryWindow = this.ownerDoc !== document;
-		this.root = (view.dom.closest('.note-editor-wrapper') as HTMLElement | null) ?? this.ownerDoc.body;
+		this.root = root;
 
 		this.host = this.ownerDoc.createElement('div');
 		this.host.setAttribute(CHIP_ATTRIBUTE, '1');
@@ -115,7 +148,7 @@ class TitleChip {
 		this.host.appendChild(this.button);
 
 		this.attachHandlers();
-		this.observe();
+		// The observer is attached in sync(), once the slot for the current placement is known.
 	}
 
 	// ── events ────────────────────────────────────────────────────────────────────────────────────
@@ -167,7 +200,7 @@ class TitleChip {
 	 * Resolve where the chip belongs for the current placement setting.
 	 *
 	 * Only the slots below are safe against React re-rendering the title bar (which it does on every
-	 * note switch and when the 800px breakpoint flips the wrapper between row and column):
+	 * note switch, and around Joplin mounting/unmounting its own "In: <Notebook>" pill):
 	 *  - a DIRECT child of `.note-title-wrapper`,
 	 *  - a DIRECT child of `.editor-toolbar`,
 	 *  - the immediate next sibling of `.note-title-wrapper` (the exact slot Joplin's own
@@ -206,26 +239,62 @@ class TitleChip {
 
 	private place(): boolean {
 		const slot = this.resolveSlot(this.state.settings.placement);
-		if (!slot) return false;
-		if (this.isPlaced(slot)) return true;
-		if (slot.after) {
-			(slot.after as ChildNode).after(this.host);
-		} else {
-			slot.parent.insertBefore(this.host, slot.parent.firstChild);
+		if (!slot) {
+			// No title bar yet (or it was just torn down). Keep watching the column's title area so we
+			// come back when React puts one there.
+			this.observe([this.root]);
+			return false;
 		}
+		if (!this.isPlaced(slot)) {
+			if (slot.after) {
+				(slot.after as ChildNode).after(this.host);
+			} else {
+				slot.parent.insertBefore(this.host, slot.parent.firstChild);
+			}
+		}
+		const wrapper = this.titleWrapper();
+		this.observe([wrapper?.parentElement ?? null, slot.parent]);
 		return true;
 	}
 
 	/**
-	 * Watch this editor's column for the React re-renders that would drop or displace the chip: a
-	 * note switch rebuilds the title bar, and crossing the 800px viewport breakpoint restacks it.
-	 * Without this the chip silently disappears the first time the user resizes the window.
+	 * Watch the title area — and ONLY the title area — for the React updates that would drop or
+	 * displace the chip.
+	 *
+	 * What actually threatens the chip: React re-rendering the title bar on a note switch, and
+	 * Joplin mounting or unmounting its own "In: <Notebook>" pill as the view changes between a
+	 * notebook and a search/tag/All-notes view (that pill is our neighbour in the below-title slot).
+	 * The 800px layout change is NOT one of them — `.note-title-wrapper` flips between row and column
+	 * through a plain CSS media query (gui/NoteEditor/styles/note-title-wrapper.scss), with no React
+	 * involvement and no DOM mutation.
+	 *
+	 * Scope is the whole point of this method. Watching the editor column with `subtree: true` would
+	 * wake this observer on every keystroke and every CodeMirror viewport update, which is a lot of
+	 * work to discover nothing changed. Two childList-only observations cover every real case: the
+	 * title wrapper's PARENT (the wrapper being replaced, the native pill appearing or disappearing,
+	 * and our chip being removed from the below-title slot) and the CURRENT slot's parent (our chip
+	 * being removed from inside the wrapper or the toolbar).
 	 */
-	private observe(): void {
+	private observe(targets: Array<Node | null>): void {
 		const MO = (this.ownerWin as unknown as { MutationObserver?: typeof MutationObserver }).MutationObserver;
 		if (typeof MO !== 'function') return;
+
+		const wanted = targets.filter((t): t is Node => !!t);
+		// Re-observing the same nodes on every sync would be pointless churn; skip when unchanged.
+		if (
+			this.observer &&
+			wanted.length === this.observedTargets.length &&
+			wanted.every((t, i) => this.observedTargets[i] === t)
+		) {
+			return;
+		}
+
+		this.observer?.disconnect();
 		this.observer = new MO(() => this.scheduleSync());
-		this.observer.observe(this.root, { childList: true, subtree: true });
+		for (const target of wanted) {
+			this.observer.observe(target, { childList: true });
+		}
+		this.observedTargets = wanted;
 	}
 
 	// Re-inserting the chip itself fires the observer again, so coalesce and make sync idempotent:
@@ -319,6 +388,7 @@ class TitleChip {
 		this.clickTimer = null;
 		this.observer?.disconnect();
 		this.observer = null;
+		this.observedTargets = [];
 		this.host.remove();
 		// Only drop the document-wide hide class once NO chip is left in this document: during an
 		// editor remount two instances can briefly overlap, and the survivor must keep its rule.
@@ -336,9 +406,26 @@ export default (context: ContentScriptContext): MarkdownEditorContentScriptModul
 			return;
 		}
 
-		let chip: TitleChip | null = new TitleChip(view, (action, state) => {
-			void context.postMessage({ type: 'action', action, noteId: state.noteId, folderId: state.folderId });
+		let chip: TitleChip | null = TitleChip.create(view, (action, state) => {
+			// Report failures rather than swallowing them: openNote throws if the note or its parent
+			// notebook has vanished, and moveToFolder throws on an id it cannot load. A dead-feeling
+			// button with nothing in the console is the worst of both worlds.
+			void context
+				.postMessage({ type: 'action', action, noteId: state.noteId, folderId: state.folderId })
+				.then((result: ActionResult | null) => {
+					if (result && result.ok === false) {
+						console.warn(`[whereabouts] action "${action}" did not run: ${result.error ?? 'unknown reason'}`);
+					}
+				})
+				.catch((error: unknown) => {
+					console.warn(`[whereabouts] action "${action}" could not be delivered`, error);
+				});
 		});
+		if (!chip) {
+			console.warn('[whereabouts] editor is not inside a note-editor column; chip not mounted');
+			return;
+		}
+
 		let destroyed = false;
 		// Answers can arrive out of order (a poll in flight while a note switch fires its own
 		// request); only the newest one may win, or the chip flickers back to the previous notebook.
@@ -346,57 +433,102 @@ export default (context: ContentScriptContext): MarkdownEditorContentScriptModul
 		let appliedSeq = -1;
 		let appliedSignature = '';
 
+		// `plugin()` runs ONCE per editor mount, not once per note: switching notes reuses the same
+		// CodeMirror instance. Joplin exposes the open note's id as a CM facet (updated through
+		// `setNoteIdEffect`), so the facet is both the reliable "the note changed" signal AND — more
+		// importantly — the only way this editor can tell the plugin WHICH note it is showing.
+		//
+		// That matters for correctness, not just efficiency. The plugin's `selectedNote()` reads the
+		// root redux state, which Joplin's WINDOW_FOCUS reducer swaps to whichever window has focus,
+		// so a secondary editor window that did not send its own id would be told about the focused
+		// window's note instead of its own.
+		const noteIdFacet = editorControl.joplinExtensions?.noteIdFacet ?? null;
+		const currentNoteId = (): string | undefined => {
+			if (!noteIdFacet) return undefined;
+			const id = view.state.facet(noteIdFacet);
+			return typeof id === 'string' && id ? id : undefined;
+		};
+
+		// Poll pacing: quick while things are moving, slow once the answer stops changing.
+		let pollMs = POLL_MS;
+		let unchangedRuns = 0;
+		let pollId: number | null = null;
+
+		const applyState = (state: ChipState, seq: number): void => {
+			if (destroyed || !chip || seq <= appliedSeq) return;
+			appliedSeq = seq;
+			const signature = JSON.stringify(state);
+			if (signature === appliedSignature) {
+				unchangedRuns++;
+				return;
+			}
+			appliedSignature = signature;
+			unchangedRuns = 0;
+			resetPollPace();
+			chip.setState(state);
+		};
+
 		const requestState = (): void => {
 			if (destroyed) return;
 			const seq = ++requestSeq;
 			void (async () => {
 				let state: ChipState | null = null;
 				try {
-					state = (await context.postMessage({ type: 'getState' })) as ChipState | null;
+					state = (await context.postMessage({ type: 'getState', noteId: currentNoteId() })) as ChipState | null;
 				} catch (error) {
 					return; // transient; the poll comes round again
 				}
-				if (destroyed || !chip || !state || seq <= appliedSeq) return;
-				appliedSeq = seq;
-				const signature = JSON.stringify(state);
-				if (signature === appliedSignature) return;
-				appliedSignature = signature;
-				chip.setState(state);
+				if (!state) return;
+				applyState(state, seq);
 			})();
 		};
 
-		// Live PUSH from the plugin: fires on note selection, note change (which is what a move
-		// emits) and settings changes — but only for the FOCUSED window's editor.
-		editorControl.registerCommand(REFRESH_COMMAND, (state: ChipState) => {
-			if (destroyed || !chip || !state) return;
-			appliedSeq = ++requestSeq;
-			const signature = JSON.stringify(state);
-			if (signature === appliedSignature) return;
-			appliedSignature = signature;
-			chip.setState(state);
+		const timerWin: Window = view.dom.ownerDocument.defaultView ?? window;
+		const ownerDoc: Document = view.dom.ownerDocument;
+
+		// A self-rescheduling timeout rather than setInterval, so the delay can grow and shrink.
+		const schedulePoll = (): void => {
+			if (destroyed) return;
+			pollId = timerWin.setTimeout(() => {
+				pollId = null;
+				if (destroyed || !view.dom.isConnected) return;
+				// A hidden window (minimised, another workspace, the app in the background) cannot be
+				// showing a stale chip to anyone. Skip the round-trip entirely and look again later.
+				if (ownerDoc.visibilityState === 'visible') {
+					if (unchangedRuns >= POLL_IDLE_AFTER) pollMs = POLL_IDLE_MS;
+					requestState();
+				}
+				schedulePoll();
+			}, pollMs);
+		};
+
+		function resetPollPace(): void {
+			unchangedRuns = 0;
+			pollMs = POLL_MS;
+		}
+
+		// Live refresh PING from the plugin: fires on note selection, note change (which is what a
+		// move emits), sync completion and settings changes — but only for the FOCUSED window's
+		// editor. It carries no state: only this editor knows which note it holds, so it re-asks.
+		editorControl.registerCommand(REFRESH_COMMAND, () => {
+			resetPollPace();
+			requestState();
 		});
 
-		const timerWin: Window = view.dom.ownerDocument.defaultView ?? window;
-		const pollId = timerWin.setInterval(() => {
-			if (destroyed || !view.dom.isConnected) return;
-			requestState();
-		}, POLL_MS);
-
-		// `plugin()` runs ONCE per editor mount, not once per note: switching notes reuses the same
-		// CodeMirror instance. Joplin exposes the open note's id as a CM facet (updated through
-		// `setNoteIdEffect`), so comparing the facet across an update is the reliable "the note
-		// changed" signal — a doc change is not, since editing a note also changes the doc.
-		const noteIdFacet = editorControl.joplinExtensions?.noteIdFacet ?? null;
 		const updateListener = EditorView.updateListener.of((update: ViewUpdate) => {
 			if (!noteIdFacet) return;
-			if (update.startState.facet(noteIdFacet) !== update.state.facet(noteIdFacet)) requestState();
+			if (update.startState.facet(noteIdFacet) !== update.state.facet(noteIdFacet)) {
+				resetPollPace();
+				requestState();
+			}
 		});
 
 		const lifecycle = ViewPlugin.fromClass(
 			class {
 				public destroy() {
 					destroyed = true;
-					timerWin.clearInterval(pollId);
+					if (pollId !== null) timerWin.clearTimeout(pollId);
+					pollId = null;
 					chip?.destroy();
 					chip = null;
 				}
@@ -405,7 +537,8 @@ export default (context: ContentScriptContext): MarkdownEditorContentScriptModul
 
 		editorControl.addExtension([updateListener, lifecycle]);
 
-		// First paint.
+		// First paint, then start the poll.
 		requestState();
+		schedulePoll();
 	},
 });
