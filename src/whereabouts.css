@@ -44,14 +44,31 @@ html.whereabouts-hide-native
 
 /*
  * below-title: the native pill's exact slot — a row of its own between the title bar and the
- * editor. The LEFT padding is core's own --joplin-editor-padding-left, matching renderSearchInfo(),
- * so the chip lines up with the note text below it. The VERTICAL padding is deliberately 6px rather
- * than core's 10px: Joplin's pill appears only in search results, where a taller band reads as a
- * banner, whereas this chip is on screen for every note and 10px above and below cost noticeable
- * editor height for no gain.
+ * editor.
+ *
+ * ALIGNMENT (asserted in placement.spec.ts): the chip's outer left edge must land on the same
+ * vertical line as the title text and the editor toolbar. All three are at Joplin's editor
+ * padding-left: the title row gets it from `.note-title-wrapper`'s padding (and the title input
+ * adds none of its own), and the editor container gets it from an inline style. This host is a
+ * SIBLING of the title row, so it has to supply that padding itself.
+ *
+ * The `8px` fallback is not decoration. Joplin builds `--joplin-*` variables from its theme object
+ * (`themeToCssVariables` → `--joplin-${camelCaseToDash(key)}`), so this one exists only while the
+ * theme carries `editorPaddingLeft` — 8 in the shipped themes. If a theme ever drops it the
+ * variable silently resolves to nothing, the padding collapses to 0, and the chip slides left of
+ * the title. The fallback pins it to the same value core's own inline styles use.
+ *
+ * NO VERTICAL PADDING, deliberately. Padding here sits inside the host box, so it cannot affect the
+ * empty space above or below the chip (the acceptance criterion, measured host-box to host-box) —
+ * it would only make the row taller. The vertical spacing is put on the host's MARGINS at runtime
+ * by alignChipRow(), which measures what the title row and the editor container already contribute
+ * and balances the two sides. See that method for the arithmetic.
  */
 .whereabouts-host[data-placement='below-title'] {
-	padding: 6px 0 6px var(--joplin-editor-padding-left);
+	padding-top: 0;
+	padding-bottom: 0;
+	padding-right: 0;
+	padding-left: var(--joplin-editor-padding-left, 8px);
 }
 
 /*
@@ -65,8 +82,21 @@ html.whereabouts-hide-native
 	margin-left: 8px;
 }
 
-/* toolbar-first: a direct child of .editor-toolbar, before its first .group. */
-.whereabouts-host[data-placement='toolbar-first'] {
+/*
+ * below-title-compact: the chip is a direct child of the title row, but the row is made to WRAP so
+ * the chip starts a second line. `margin-right: auto` pushes everything after it (the date label
+ * and the note toolbar) to the far right of that line. See the .whereabouts-compact block below.
+ */
+.whereabouts-host[data-placement='below-title-compact'] {
+	flex: 0 0 auto;
+	margin-right: auto;
+	/* As above: vertical spacing is the wrapper's row-gap and padding-bottom, set by alignChipRow(). */
+	padding-top: 0;
+	padding-bottom: 0;
+}
+
+/* editor-toolbar: a direct child of #CodeMirrorToolbar, before its first .group. */
+.whereabouts-host[data-placement='editor-toolbar'] {
 	flex-shrink: 0;
 }
 
@@ -77,7 +107,11 @@ html.whereabouts-hide-native
 .whereabouts-chip {
 	display: inline-flex;
 	align-items: center;
-	max-width: 100%;
+	/* Never clamped to core's square icon-button width, and never shrunk below its text. */
+	width: auto;
+	max-width: none;
+	flex: 0 0 auto;
+	overflow: visible;
 	box-sizing: border-box;
 	padding: 3px 8px;
 	border: 1px solid var(--joplin-border-color4);
@@ -94,8 +128,6 @@ html.whereabouts-hide-native
 	line-height: 1.4;
 	cursor: pointer;
 	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
 }
 
 .whereabouts-chip:hover {
@@ -107,10 +139,24 @@ html.whereabouts-hide-native
 	outline-offset: 1px;
 }
 
+/*
+ * The notebook NAME is the whole point of the chip, so it is never allowed to collapse to nothing.
+ *
+ * In 0.1.0 the note-toolbar placement rendered icon-only on a real profile: core's `.toolbar-button`
+ * carries `overflow: hidden` with a square `width`/`max-width`, and its label is a bare span with
+ * `overflow: hidden; text-overflow: ellipsis`. Put that button anywhere space is tight — the title
+ * row, where `input.title-input` is `flex: 1` and greedy — and the label gets zero width and simply
+ * disappears, with no ellipsis to hint that anything is missing.
+ *
+ * So: the chip never shrinks, is never clamped to the square icon width, and the label always keeps
+ * its intrinsic width. `showIcon` toggles the glyph only; the name has no setting and is never
+ * hidden in any placement.
+ */
 .whereabouts-label {
-	overflow: hidden;
-	text-overflow: ellipsis;
+	overflow: visible;
 	white-space: nowrap;
+	flex: 0 0 auto;
+	min-width: max-content;
 }
 
 .whereabouts-icon {
@@ -128,15 +174,18 @@ html.whereabouts-hide-native
 }
 
 /*
- * In the note toolbar the chip carries Joplin's own `toolbar-button -has-title` classes so it
+ * In the editor toolbar the chip carries Joplin's own `toolbar-button -has-title` classes so it
  * inherits core's height, hover and colours. But this stylesheet is linked AFTER core's, and the
  * .whereabouts-chip rules above have equal specificity, so they would win every property they
  * declare and leave the chip visibly taller and differently padded from its neighbours. Hand each
  * of those properties back to core explicitly — this block is what makes the chip match the buttons
- * beside it, and placement.spec.ts asserts the computed padding and cursor against a real sibling
- * toolbar button.
+ * beside it, and placement.spec.ts asserts the computed padding, cursor and height against a real
+ * sibling toolbar button.
+ *
+ * What is NOT handed back: width, max-width and overflow. Core clamps `.toolbar-button` to a square
+ * and hides its overflow, which is exactly what made the label vanish in 0.1.0.
  */
-.whereabouts-host[data-placement='toolbar-first'] .whereabouts-chip {
+.whereabouts-host[data-placement='editor-toolbar'] .whereabouts-chip {
 	/* Core .toolbar-button: display flex, padding 0 5px, cursor default, no border/background. */
 	display: flex;
 	padding: 0 5px;
@@ -152,12 +201,12 @@ html.whereabouts-hide-native
 	box-sizing: border-box;
 }
 
-.whereabouts-host[data-placement='toolbar-first'] .whereabouts-chip:hover {
+.whereabouts-host[data-placement='editor-toolbar'] .whereabouts-chip:hover {
 	background-color: var(--joplin-background-color-hover3);
 }
 
 /* Core sizes the toolbar glyph itself; do not fight it with the pill's own icon rules. */
-.whereabouts-host[data-placement='toolbar-first'] .whereabouts-icon {
+.whereabouts-host[data-placement='editor-toolbar'] .whereabouts-icon {
 	font-size: 16px;
 	color: inherit;
 	margin-right: 5px;
@@ -171,4 +220,60 @@ html.whereabouts-hide-native
 
 .whereabouts-host.-inert .whereabouts-chip:hover {
 	background-color: var(--joplin-background-color3);
+}
+
+
+/* ── below-title-compact: the title row folded into two lines ──────────────────────────────────
+ *
+ * Row 1 is the title, full width. Row 2 is the chip on the left and Joplin's own title-row items
+ * (the updated-time label and the note toolbar) on the right.
+ *
+ * Nothing is re-parented to achieve this — see COMPACT_CLASS in src/common.ts for why moving
+ * React's nodes would crash the editor. The content script only inserts the chip between the title
+ * input and `.note-title-info-group` and puts this class on the wrapper; the two-line layout is
+ * entirely the four rules below.
+ *
+ *   flex-wrap on the row          lets a second line exist at all
+ *   title-input flex-basis 100%   fills line 1, forcing everything after it onto line 2
+ *   chip margin-right: auto       pushes the rest of line 2 away from the chip
+ *   info-group margin-left: auto  pins the date + icons to the right edge
+ */
+.note-title-wrapper.whereabouts-compact {
+	flex-wrap: wrap;
+}
+
+/*
+ * `!important` is required here and nowhere else in this file.
+ *
+ * Joplin builds the title input with a React INLINE style (NoteTitleBar's `styles.titleInput`,
+ * which sets `flex: 1` — grow 1, shrink 1, basis 0%). An inline declaration beats any stylesheet
+ * rule regardless of specificity, so a plain `flex-basis: 100%` here is silently ignored, the input
+ * never claims a line of its own, and nothing wraps. Overriding just the BASIS leaves core's grow
+ * and shrink values alone.
+ */
+.note-title-wrapper.whereabouts-compact input.title-input {
+	flex-basis: 100% !important;
+}
+
+.note-title-wrapper.whereabouts-compact .note-title-info-group {
+	margin-left: auto;
+}
+
+/*
+ * Below 800px core stacks the whole title row into a column and gives the info group a full-width
+ * top border. That undoes the compact layout — the chip and the icons would end up on separate
+ * lines again, which is the opposite of what this placement is for. Keep the two-line arrangement,
+ * which is if anything MORE useful on a narrow window: the title still gets a full line to itself.
+ */
+@media (max-width: 800px) {
+	.note-title-wrapper.whereabouts-compact {
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: center;
+	}
+
+	.note-title-wrapper.whereabouts-compact .note-title-info-group {
+		width: auto;
+		border-top: none;
+	}
 }

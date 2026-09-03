@@ -30,8 +30,18 @@ export async function chipNoteId(win: Page): Promise<string> {
  *   - 'toolbar-first'  the chip is the FIRST CHILD of the note toolbar
  *   - 'other'/'absent' anything else
  */
-export type ChipPosition = 'below-title' | 'inline-right' | 'toolbar-first' | 'other' | 'absent';
+export type ChipPosition =
+	| 'below-title'
+	| 'title-row-after-input'
+	| 'editor-toolbar'
+	| 'other'
+	| 'absent';
 
+/**
+ * `inline-right` and `below-title-compact` share the same DOM slot on purpose — only CSS separates
+ * them — so this reports the structural position and the callers assert the LAYOUT difference
+ * separately (see compactLayout()).
+ */
 export async function chipPosition(win: Page): Promise<ChipPosition> {
 	return win.evaluate(() => {
 		const host = document.querySelector('[data-whereabouts-chip]');
@@ -44,12 +54,12 @@ export async function chipPosition(win: Page): Promise<ChipPosition> {
 		}
 		if (host.parentElement === wrapper) {
 			const input = wrapper.querySelector('input.title-input');
-			if (input && input.nextElementSibling === host) return 'inline-right';
+			if (input && input.nextElementSibling === host) return 'title-row-after-input';
 			return 'other';
 		}
-		const toolbar = wrapper.querySelector('.note-title-info-group .editor-toolbar');
-		if (toolbar && host.parentElement === toolbar && toolbar.firstElementChild === host) {
-			return 'toolbar-first';
+		const editorToolbar = document.querySelector('#CodeMirrorToolbar');
+		if (editorToolbar && host.parentElement === editorToolbar && editorToolbar.firstElementChild === host) {
+			return 'editor-toolbar';
 		}
 		return 'other';
 	});
@@ -311,4 +321,183 @@ export async function applyAndCloseSettings(win: Page): Promise<void> {
 	await win.locator('.button-bar button', { hasText: 'Back' }).first().click();
 	await win.waitForTimeout(SETTLE);
 	await expect(win.locator('.config-screen')).toHaveCount(0, { timeout: 30_000 });
+}
+
+// ── geometry ────────────────────────────────────────────────────────────────────────────────────
+
+export interface RowSpacing {
+	found: boolean;
+	/** A — empty space above the chip: chipHost.top − titleInput.bottom. */
+	above: number;
+	/** B — empty space below the chip row: editorToolbar.top − chipRow.bottom. */
+	below: number;
+	/** Outer (border-box) left edge of the chip button. */
+	chipLeft: number;
+	/** Where the note TITLE's text actually starts: input left + its border + its padding. */
+	titleTextLeft: number;
+	/** Outer left edge of the editor toolbar container (#CodeMirrorToolbar). */
+	editorToolbarLeft: number;
+}
+
+/**
+ * Measure the empty space around the chip's row, exactly as the acceptance criterion defines it.
+ *
+ * A and B are gaps between rendered BOXES, not between text: a user reads them as the air above and
+ * below the chip. They have to be equal to each other, and equal to the gap a single-line layout
+ * leaves between the title and the editor toolbar, so the chip row sits on the same rhythm as every
+ * other line instead of looking like a banner.
+ */
+export async function measureRowSpacing(win: Page, compact = false): Promise<RowSpacing> {
+	return win.evaluate((isCompact) => {
+		const empty = {
+			found: false,
+			above: -1,
+			below: -1,
+			chipLeft: -1,
+			titleTextLeft: -1,
+			editorToolbarLeft: -1,
+		};
+		const host = document.querySelector('[data-whereabouts-chip]') as HTMLElement | null;
+		const chip = document.querySelector('[data-whereabouts-chip] .whereabouts-chip') as HTMLElement | null;
+		const input = document.querySelector('input.title-input') as HTMLElement | null;
+		const toolbar = document.querySelector('#CodeMirrorToolbar') as HTMLElement | null;
+		if (!host || !chip || !input || !toolbar) return empty;
+
+		const inputRect = input.getBoundingClientRect();
+		const hostRect = host.getBoundingClientRect();
+		const toolbarRect = toolbar.getBoundingClientRect();
+
+		// In the compact layout the chip shares its row with the date + note-toolbar icons, so the
+		// measurement is against the wrapped LINE, not the chip's own box: the line spans from
+		// whichever item starts highest to whichever reaches lowest. (The chip is usually the shorter
+		// of the two and is centred within the line, so using its own top would report the centring
+		// offset as if it were empty space above the row.)
+		const group = document.querySelector('.note-title-info-group') as HTMLElement | null;
+		const groupRect = isCompact && group ? group.getBoundingClientRect() : null;
+		const rowTop = groupRect ? Math.min(hostRect.top, groupRect.top) : hostRect.top;
+		const rowBottom = groupRect ? Math.max(hostRect.bottom, groupRect.bottom) : hostRect.bottom;
+
+		const inputStyle = getComputedStyle(input);
+		return {
+			found: true,
+			above: rowTop - inputRect.bottom,
+			below: toolbarRect.top - rowBottom,
+			chipLeft: chip.getBoundingClientRect().left,
+			titleTextLeft:
+				inputRect.left +
+				(parseFloat(inputStyle.borderLeftWidth) || 0) +
+				(parseFloat(inputStyle.paddingLeft) || 0),
+			editorToolbarLeft: toolbarRect.left,
+		};
+	}, compact);
+}
+
+/**
+ * The single-line gap: with the chip inside the title row (inline-right), the space between the
+ * title input and the editor toolbar. This is the number the chip's own row has to reproduce above
+ * AND below itself, so it is measured in the inline-right launch and handed to the others.
+ */
+export async function measureSingleLineGap(win: Page): Promise<number> {
+	return win.evaluate(() => {
+		const input = document.querySelector('input.title-input') as HTMLElement | null;
+		const toolbar = document.querySelector('#CodeMirrorToolbar') as HTMLElement | null;
+		if (!input || !toolbar) return -1;
+		return toolbar.getBoundingClientRect().top - input.getBoundingClientRect().bottom;
+	});
+}
+
+/** Vertical centres of the chip and of a real note-toolbar button, for the inline-right check. */
+export async function measureInlineRightCentring(
+	win: Page,
+): Promise<{ chipCentre: number; buttonCentre: number; found: boolean }> {
+	return win.evaluate(() => {
+		const chip = document.querySelector('[data-whereabouts-chip] .whereabouts-chip') as HTMLElement | null;
+		const button = document.querySelector(
+			'.note-title-info-group .editor-toolbar .group button.toolbar-button',
+		) as HTMLElement | null;
+		if (!chip || !button) return { chipCentre: -1, buttonCentre: -1, found: false };
+		const c = chip.getBoundingClientRect();
+		const b = button.getBoundingClientRect();
+		return { chipCentre: c.top + c.height / 2, buttonCentre: b.top + b.height / 2, found: true };
+	});
+}
+
+export interface CompactLayout {
+	found: boolean;
+	/** The wrapper carries the marker class the CSS is keyed off. */
+	hasClass: boolean;
+	/** The title input occupies a line of its own, i.e. it spans the wrapper's content width. */
+	titleSpansFullWidth: boolean;
+	/** Chip and info group share a row BELOW the title. */
+	chipBelowTitle: boolean;
+	iconsBelowTitle: boolean;
+	chipAndIconsSameRow: boolean;
+	/** Chip on the left, icons on the right. */
+	chipLeftOfIcons: boolean;
+}
+
+/** Assert the two-line compact arrangement from real geometry, not from the CSS text. */
+export async function compactLayout(win: Page): Promise<CompactLayout> {
+	return win.evaluate(() => {
+		const empty: CompactLayout = {
+			found: false,
+			hasClass: false,
+			titleSpansFullWidth: false,
+			chipBelowTitle: false,
+			iconsBelowTitle: false,
+			chipAndIconsSameRow: false,
+			chipLeftOfIcons: false,
+		};
+		const wrapper = document.querySelector('.note-title-wrapper') as HTMLElement | null;
+		const input = document.querySelector('input.title-input') as HTMLElement | null;
+		const host = document.querySelector('[data-whereabouts-chip]') as HTMLElement | null;
+		const group = document.querySelector('.note-title-info-group') as HTMLElement | null;
+		if (!wrapper || !input || !host || !group) return empty;
+
+		const ws = getComputedStyle(wrapper);
+		const wRect = wrapper.getBoundingClientRect();
+		const contentWidth =
+			wRect.width - (parseFloat(ws.paddingLeft) || 0) - (parseFloat(ws.paddingRight) || 0);
+		const iRect = input.getBoundingClientRect();
+		const hRect = host.getBoundingClientRect();
+		const gRect = group.getBoundingClientRect();
+
+		const rowsOverlap = (a: DOMRect, b: DOMRect) => a.top < b.bottom - 1 && b.top < a.bottom - 1;
+
+		return {
+			found: true,
+			hasClass: wrapper.classList.contains('whereabouts-compact'),
+			// Within 2px of the full content width: it is the only thing on its line.
+			titleSpansFullWidth: Math.abs(iRect.width - contentWidth) <= 2,
+			chipBelowTitle: hRect.top >= iRect.bottom - 1,
+			iconsBelowTitle: gRect.top >= iRect.bottom - 1,
+			chipAndIconsSameRow: rowsOverlap(hRect, gRect),
+			chipLeftOfIcons: hRect.left < gRect.left,
+		};
+	});
+}
+
+// ── screenshots ─────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Capture the note editor's title area to `docs/images/placement-<name>.png`.
+ *
+ * These are committed and double as the README/manifest screenshots, so they are produced by the
+ * real app under test rather than pasted in by hand — which also means they cannot silently drift
+ * away from what the plugin actually renders.
+ */
+export async function captureTitleArea(win: Page, name: string, height = 140): Promise<string> {
+	const box = await win.locator('.note-editor-wrapper').first().boundingBox();
+	if (!box) throw new Error('note editor wrapper has no bounding box');
+	const path = `docs/images/placement-${name}.png`;
+	await win.screenshot({
+		path,
+		clip: {
+			x: Math.round(box.x),
+			y: Math.round(box.y),
+			width: Math.round(box.width),
+			height: Math.min(height, Math.round(box.height)),
+		},
+	});
+	return path;
 }

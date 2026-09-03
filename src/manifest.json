@@ -2,7 +2,7 @@
 	"manifest_version": 1,
 	"id": "io.github.pmslava.whereabouts",
 	"app_min_version": "3.7",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"name": "Whereabouts",
 	"description": "Always shows the current notebook next to the note title (last name or full path), with click to filter, double-click to reveal, right-click to move.",
 	"author": "pmslava",
@@ -21,5 +21,23 @@
 	],
 	"platforms": [
 		"desktop"
+	],
+	"screenshots": [
+		{
+			"src": "docs/images/placement-below-title.png",
+			"label": "The notebook chip on its own row below the note title, aligned with the title text and the editor toolbar"
+		},
+		{
+			"src": "docs/images/placement-below-title-compact.png",
+			"label": "The compact variant: the title takes the full width and the chip shares a row with the date and note-toolbar icons"
+		},
+		{
+			"src": "docs/images/placement-inline-right.png",
+			"label": "The chip inline, immediately to the right of the note title"
+		},
+		{
+			"src": "docs/images/placement-editor-toolbar.png",
+			"label": "The chip as the first item of the editor toolbar, styled as a native toolbar button"
+		}
 	]
 }

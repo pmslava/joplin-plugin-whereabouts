@@ -82,12 +82,14 @@ async function registerSettings(): Promise<void> {
 			section: SETTINGS_SECTION,
 			label: 'Where to show it',
 			description:
-				'Below the title is the slot Joplin\'s own "In: <Notebook>" pill uses in search results. ' +
-				'Applies live.',
+				'"Own row below the title" is the slot Joplin\'s own "In: <Notebook>" pill uses in ' +
+				'search results. The compact variant moves the title row\'s date and icons down onto ' +
+				'the chip\'s row, so the title itself gets the full width. Applies live.',
 			options: {
-				'below-title': 'On its own row below the title',
-				'inline-right': 'Inline, to the right of the title',
-				'toolbar-first': 'As the first item of the note toolbar',
+				'below-title': 'Own row below the title',
+				'below-title-compact': 'Own row below the title, title-row icons moved down',
+				'inline-right': 'Right of the title',
+				'editor-toolbar': 'First item of the editor toolbar',
 			},
 			storage: SettingStorage.File,
 		},

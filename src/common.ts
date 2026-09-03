@@ -28,6 +28,17 @@ export const HIDE_NATIVE_CLASS = 'whereabouts-hide-native';
 /** Marker attribute on the injected chip, so re-inserting is idempotent. */
 export const CHIP_ATTRIBUTE = 'data-whereabouts-chip';
 
+/**
+ * Class the content script puts on `.note-title-wrapper` for the below-title-compact placement.
+ *
+ * The whole compact layout is done in CSS keyed off this class — NOTHING is re-parented. Moving
+ * `.note-title-info-group` under the chip with the DOM would be the obvious implementation and it
+ * is wrong: that node is React's, and React throws the next time it reconciles `.note-title-wrapper`
+ * having found its child somewhere else. A class is safe in the other direction: React sets
+ * `className` on the wrapper from a constant string, so it never diffs it and never strips ours.
+ */
+export const COMPACT_CLASS = 'whereabouts-compact';
+
 export const SETTING_PATH_MODE = 'pathMode';
 export const SETTING_PLACEMENT = 'placement';
 export const SETTING_HIDE_NATIVE_PILL = 'hideNativePill';
@@ -35,7 +46,15 @@ export const SETTING_SEPARATOR = 'separator';
 export const SETTING_SHOW_ICON = 'showIcon';
 
 export type PathMode = 'last' | 'full';
-export type Placement = 'inline-right' | 'below-title' | 'toolbar-first';
+export type Placement = 'below-title' | 'below-title-compact' | 'inline-right' | 'editor-toolbar';
+
+/** Every value `placement` may hold. Keep in sync with the setting's options in index.ts. */
+export const PLACEMENTS: readonly Placement[] = [
+	'below-title',
+	'below-title-compact',
+	'inline-right',
+	'editor-toolbar',
+] as const;
 
 export interface WhereaboutsSettings {
 	pathMode: PathMode;
@@ -98,8 +117,16 @@ export function chipLabel(state: ChipState): string {
 /** Defensive coercion: a seeded or hand-edited settings.json can carry anything. */
 export function coerceSettings(raw: Partial<WhereaboutsSettings> | null | undefined): WhereaboutsSettings {
 	const pathMode: PathMode = raw?.pathMode === 'full' ? 'full' : 'last';
+	// Read as a plain string: this is untrusted stored data, and it legitimately holds values that
+	// are no longer part of the Placement union.
+	//
+	// `toolbar-first` was 0.1.0's name for putting the chip in the NOTE toolbar (top right of the
+	// title row). 0.2.0 replaces that with the EDITOR toolbar, which is where it belongs; migrate the
+	// stored value rather than silently resetting anyone who had chosen it.
+	const storedPlacement = typeof raw?.placement === 'string' ? (raw.placement as string) : '';
+	const migrated = storedPlacement === 'toolbar-first' ? 'editor-toolbar' : storedPlacement;
 	const placement: Placement =
-		raw?.placement === 'inline-right' || raw?.placement === 'toolbar-first' ? raw.placement : 'below-title';
+		PLACEMENTS.indexOf(migrated as Placement) >= 0 ? (migrated as Placement) : 'below-title';
 	// Default true: only an explicit `false` shows the native pill again.
 	const hideNativePill = raw?.hideNativePill !== false;
 	const separator = typeof raw?.separator === 'string' ? raw.separator : DEFAULT_SETTINGS.separator;

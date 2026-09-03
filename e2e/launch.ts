@@ -50,7 +50,7 @@ export interface JoplinInstance {
 /** Plugin settings to seed into a profile's settings.json (File-storage keys). */
 export interface SeedSettings {
   pathMode?: 'last' | 'full';
-  placement?: 'inline-right' | 'below-title' | 'toolbar-first';
+  placement?: 'below-title' | 'below-title-compact' | 'inline-right' | 'editor-toolbar';
   hideNativePill?: boolean;
   separator?: string;
   showIcon?: boolean;

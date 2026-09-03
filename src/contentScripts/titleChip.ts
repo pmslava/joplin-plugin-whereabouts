@@ -25,6 +25,7 @@ import type {
 } from 'api/types';
 import {
 	CHIP_ATTRIBUTE,
+	COMPACT_CLASS,
 	HIDE_NATIVE_CLASS,
 	REFRESH_COMMAND,
 	chipLabel,
@@ -209,26 +210,156 @@ class TitleChip {
 	 */
 	private resolveSlot(placement: Placement): Slot | null {
 		const wrapper = this.titleWrapper();
-		if (!wrapper) return null;
 
-		if (placement === 'inline-right') {
-			const input = wrapper.querySelector('input.title-input');
-			// Right after the title input, i.e. between the (flex: 1) title and the date + toolbar.
-			return { parent: wrapper, after: input ?? null };
-		}
-
-		if (placement === 'toolbar-first') {
-			// Scope through the info group: `.editor-toolbar` also matches the Markdown formatting
-			// toolbar (#CodeMirrorToolbar) further down the editor column.
-			const toolbar = wrapper.querySelector('.note-title-info-group .editor-toolbar') as HTMLElement | null;
+		if (placement === 'editor-toolbar') {
+			// The EDITOR toolbar — the formatting-button row inside the editor container
+			// (`#CodeMirrorToolbar`, aria-label "Editor actions") — not the note toolbar in the title
+			// row. Matched by id, because `.editor-toolbar` alone also matches the note toolbar. It is
+			// rendered unconditionally by Joplin's CodeMirror component, so it is there in every
+			// layout including viewer-only.
+			const toolbar = this.root.querySelector('#CodeMirrorToolbar') as HTMLElement | null;
 			if (!toolbar) return null;
+			// Before the first `.group`, as a DIRECT child. Never inside a `.group`: React owns those
+			// lists and reorders them.
 			return { parent: toolbar, after: null };
 		}
 
-		// below-title
+		if (!wrapper) return null;
+
+		if (placement === 'inline-right' || placement === 'below-title-compact') {
+			const input = wrapper.querySelector('input.title-input');
+			// Both sit right after the title input, as a direct child of the title row. What separates
+			// them is pure CSS: below-title-compact adds COMPACT_CLASS to the wrapper, which makes the
+			// row wrap so the title takes a full-width line of its own and the chip drops onto a second
+			// line with the note-toolbar icons pushed to its right.
+			return { parent: wrapper, after: input ?? null };
+		}
+
+		// below-title: the slot Joplin's own "In: <Notebook>" pill occupies.
 		const parent = wrapper.parentElement;
 		if (!parent) return null;
 		return { parent, after: wrapper };
+	}
+
+	/**
+	 * Make the chip's row sit on Joplin's own vertical rhythm, and keep its left edge on the column.
+	 *
+	 * THE RULE (this is the acceptance criterion, measured on rendered boxes):
+	 *     A = chipHost.top    − titleInput.bottom      (empty space above the chip)
+	 *     B = editorToolbar.top − chipRow.bottom       (empty space below the chip)
+	 *     A must equal B, and both must equal the gap a single-line layout has between the title
+	 *     input and the editor toolbar — so the chip reads as one more line in the same grid, not
+	 *     as a banner wedged in with more air above it than below.
+	 *
+	 * WHY THIS IS MEASURED RATHER THAN HARD-CODED: the space above the chip is whatever the title
+	 * row leaves under the input (the row is `align-items: center`, and the note toolbar beside the
+	 * input is a different height), and the space below is whatever the editor container puts above
+	 * its toolbar. Both are theme- and layout-dependent. Symmetric padding on the chip cannot fix it
+	 * — padding sits INSIDE the host box, so it never touches A or B at all, it just makes the row
+	 * taller. What moves A and B is spacing OUTSIDE the box.
+	 *
+	 * THE ARITHMETIC: let A0 and B0 be the gaps with no correction applied. The single-line gap the
+	 * chip has to reproduce on both sides is exactly A0 + B0 — the space that existed before the
+	 * chip row was inserted. Adding B0 above and A0 below gives A = A0 + B0 and B = B0 + A0. So the
+	 * correction is simply "put the other side's natural gap on this side", it needs no stored
+	 * state, it is derived fresh from the current layout every sync, and it converges in one pass.
+	 * Nothing is ever negative.
+	 *
+	 * Below-title spends that on the host's own margins. The compact layout cannot: its host is a
+	 * flex item on the wrapper's second line, where `align-items: center` means a margin does not
+	 * translate 1:1 into position. It uses the wrapper's `row-gap` (exactly the space between flex
+	 * lines) and `padding-bottom` instead — both on `.note-title-wrapper`, which is safe to style
+	 * inline for the same reason its marker class is: React renders that element with a constant
+	 * className and no style prop, so it never diffs either away.
+	 */
+	private alignChipRow(): void {
+		const placement = this.state.settings.placement;
+		const wrapper = this.titleWrapper();
+		const ownsRow = placement === 'below-title' || placement === 'below-title-compact';
+
+		if (!ownsRow || !this.host.isConnected) {
+			this.clearRowSpacing(wrapper);
+			return;
+		}
+		if (!wrapper) return;
+
+		const toolbar = this.root.querySelector('#CodeMirrorToolbar') as HTMLElement | null;
+		const input = wrapper.querySelector('input.title-input') as HTMLElement | null;
+		if (!toolbar || !input) return;
+
+		const inputRect = input.getBoundingClientRect();
+		const hostRect = this.host.getBoundingClientRect();
+		const toolbarRect = toolbar.getBoundingClientRect();
+		// Nothing laid out yet (hidden pane, editor still mounting): leave it to the next sync.
+		if (toolbarRect.width <= 0 || hostRect.width <= 0 || inputRect.width <= 0) return;
+
+		// ── horizontal: keep the chip's left edge on the toolbar's ──────────────────────────────
+		// Only below-title needs this; the compact chip is inside the title row and inherits its
+		// padding-left already.
+		if (placement === 'below-title') {
+			const delta = toolbarRect.left - this.button.getBoundingClientRect().left;
+			if (Math.abs(delta) >= 0.5) {
+				const current = parseFloat(this.ownerWin.getComputedStyle(this.host).paddingLeft) || 0;
+				this.host.style.paddingLeft = `${Math.max(0, current + delta)}px`;
+			}
+		}
+
+		// ── vertical: A = B = the single-line gap ───────────────────────────────────────────────
+		const compact = placement === 'below-title-compact';
+		const group = wrapper.querySelector('.note-title-info-group') as HTMLElement | null;
+		// In the compact layout the chip shares its row with the date + icons, so the spacing is
+		// measured against the wrapped LINE — highest top to lowest bottom — not the chip's own box.
+		// The chip is usually the shorter of the two and is centred in the line, so measuring from
+		// its own top would mistake that centring offset for empty space above the row.
+		const groupRect = compact && group ? group.getBoundingClientRect() : null;
+		const rowTop = groupRect ? Math.min(hostRect.top, groupRect.top) : hostRect.top;
+		const rowBottom = groupRect ? Math.max(hostRect.bottom, groupRect.bottom) : hostRect.bottom;
+
+		const styles = this.ownerWin.getComputedStyle(compact ? wrapper : this.host);
+		const appliedAbove = parseFloat(compact ? styles.rowGap : styles.marginTop) || 0;
+		const appliedBelow = parseFloat(compact ? styles.paddingBottom : styles.marginBottom) || 0;
+
+		const naturalAbove = rowTop - inputRect.bottom - appliedAbove;
+		const naturalBelow = toolbarRect.top - rowBottom - appliedBelow;
+
+		// Put the other side's natural gap on this side; both then equal naturalAbove + naturalBelow.
+		const nextAbove = Math.max(0, naturalBelow);
+		const nextBelow = Math.max(0, naturalAbove);
+
+		if (Math.abs(nextAbove - appliedAbove) >= 0.5) {
+			if (compact) wrapper.style.rowGap = `${nextAbove}px`;
+			else this.host.style.marginTop = `${nextAbove}px`;
+		}
+		if (Math.abs(nextBelow - appliedBelow) >= 0.5) {
+			if (compact) wrapper.style.paddingBottom = `${nextBelow}px`;
+			else this.host.style.marginBottom = `${nextBelow}px`;
+		}
+	}
+
+	/** Drop every inline correction, so switching placement cannot strand another one's spacing. */
+	private clearRowSpacing(wrapper: HTMLElement | null): void {
+		const s = this.host.style;
+		if (s.paddingLeft) s.paddingLeft = '';
+		if (s.marginTop) s.marginTop = '';
+		if (s.marginBottom) s.marginBottom = '';
+		if (wrapper) {
+			if (wrapper.style.rowGap) wrapper.style.rowGap = '';
+			if (wrapper.style.paddingBottom) wrapper.style.paddingBottom = '';
+		}
+	}
+
+	/**
+	 * Add or remove the compact-layout marker on `.note-title-wrapper`.
+	 *
+	 * Re-asserted on every sync (so the MutationObserver restores it after a React re-render) and
+	 * cleared whenever the placement is anything else, so switching placements live cannot leave a
+	 * stale class rearranging the title row.
+	 */
+	private applyCompactClass(): void {
+		const wrapper = this.titleWrapper();
+		if (!wrapper) return;
+		const on = this.state.settings.placement === 'below-title-compact' && this.host.isConnected;
+		wrapper.classList.toggle(COMPACT_CLASS, on);
 	}
 
 	/** True when the chip already sits exactly where `slot` says it should. */
@@ -335,6 +466,7 @@ class TitleChip {
 		if (!visible) {
 			this.host.remove();
 			this.applyHideNative();
+			this.applyCompactClass();
 			return;
 		}
 
@@ -359,9 +491,10 @@ class TitleChip {
 			this.host.dataset.noteId = this.state.noteId;
 			this.host.dataset.folderId = this.state.folderId;
 
-			// In the toolbar the chip must BE a native toolbar button, so it inherits Joplin's own
-			// sizing, hover and theme colours instead of approximating them.
-			const inToolbar = placement === 'toolbar-first';
+			// In the editor toolbar the chip must BE a native toolbar button, so it inherits Joplin's
+			// own sizing, hover and theme colours instead of approximating them. `-has-title` is what
+			// tells core's CSS to let the button grow past its icon-only square.
+			const inToolbar = placement === 'editor-toolbar';
 			this.button.className = inToolbar
 				? 'whereabouts-chip button toolbar-button -has-title'
 				: 'whereabouts-chip';
@@ -381,6 +514,8 @@ class TitleChip {
 
 		this.place();
 		this.applyHideNative();
+		this.applyCompactClass();
+		this.alignChipRow();
 	}
 
 	/**
@@ -402,6 +537,10 @@ class TitleChip {
 		this.observer = null;
 		this.observedTargets = [];
 		this.host.remove();
+		// The chip is going away, so the title row must go back to its normal single-line layout.
+		const wrapper = this.titleWrapper();
+		wrapper?.classList.remove(COMPACT_CLASS);
+		this.clearRowSpacing(wrapper);
 		// Only drop the document-wide hide class once NO chip is left in this document: during an
 		// editor remount two instances can briefly overlap, and the survivor must keep its rule.
 		if (!this.ownerDoc.querySelector(`[${CHIP_ATTRIBUTE}]`)) {
