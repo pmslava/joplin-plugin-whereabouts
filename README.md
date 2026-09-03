@@ -99,11 +99,14 @@ These are structural, not bugs to be fixed later:
   **Joplin 3.7.x** (`app_min_version: "3.7"`). A future Joplin could rename or restructure the title
   bar and break the chip; if that happens the plugin fails visibly (no chip) rather than quietly
   corrupting anything.
-- **In a secondary editor window** (Note → Open in new window) the chip shows that window's own
-  notebook correctly, and **right-click to move still works** — the picker opens in that window and
-  files the note you are looking at. The *click* actions are disabled there: selecting a notebook and
-  revealing a note are navigation, and they drive the sidebar and note list that live in the main
-  window. The chip's tooltip says so, and its cursor shows a menu rather than a link.
+- **In a secondary editor window** (Note → Open in new window) all three actions work, but two of
+  them act on the **main** window, because that is where the sidebar and the note list live: a left
+  click or a double click brings the main window to the front and takes it to the notebook and the
+  note, while the secondary window stays on its own note. Right-click to move stays in the window
+  you clicked in — the picker opens there and files the note you are looking at. The hand-off is
+  verified before anything moves; in the rare case it cannot be confirmed (the main window has no
+  note open in the Markdown editor, or the sidebar is hidden) the click does nothing and says so in
+  the console rather than navigating the wrong window.
 - **Conflict notes, notes in the trash, and notes in a read-only share** show their location but are
   likewise inert — filtering to, revealing in, or moving out of those would not do what you meant,
   and Joplin would reject the move.

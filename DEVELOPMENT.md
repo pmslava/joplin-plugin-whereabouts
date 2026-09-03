@@ -41,12 +41,12 @@ folder, then quit and relaunch after each `npm run dist`.
 
 | File | Role |
 | --- | --- |
-| `src/index.ts` | Plugin main process: settings, chrome CSS, content-script registration, the state builder (notebook path + guards), and the three click actions. |
+| `src/index.ts` | Plugin main process: settings, chrome CSS, content-script registration, the state builder (notebook path + guards), the three click actions, and the focus hand-off that lets a secondary window's chip navigate the main window. |
 | `src/contentScripts/titleChip.ts` | The chip itself. Runs in the renderer, injects into Joplin's note title bar, and posts actions back. |
 | `src/common.ts` | Types and constants shared by both bundles. Must not import `joplin` or CodeMirror. |
 | `src/whereabouts.css` | Chip styling (all `--joplin-*` theme variables) plus the native-pill hide rule. |
 
-Four things in the source look odd and are deliberate. Each is commented in place; read the comment
+Five things in the source look odd and are deliberate. Each is commented in place; read the comment
 before changing them:
 
 1. **The chip is delivered by a CodeMirror content script even though it never touches the note
@@ -69,6 +69,17 @@ before changing them:
    state, and Joplin's `WINDOW_FOCUS` reducer swaps the focused window's state into root, so it
    answers for whichever window has focus. With a secondary editor window open, a plugin-side guess
    would give both chips the focused window's notebook.
+5. **A click in a secondary window runs `focusElementSideBar` first, and then waits for evidence
+   before it navigates** (`handOverToMainWindow` in `src/index.ts`). Same root cause as point 4 from
+   the other side: `openNote` dispatches into the one store whose root is the focused window's
+   state, and a plugin cannot pass a window id, so the main window has to be focused before the
+   action can mean what the user meant. `focusElementSideBar` is used because it calls
+   `bridge().switchToMainWindow()` with no other navigation; `focusElementNoteList` carries the same
+   side effect *and* marks the note-list row, which is the one thing that distinguishes this
+   plugin's single click from its double click. The wait is a poll for the state swap (root state's
+   selected note becomes the note the main window's editor reports), never a sleep and never a
+   focus query — `document.hasFocus()` is not a plugin-reachable fact and is not decisive anyway.
+   If it cannot be confirmed, nothing is navigated.
 
 ## End-to-end tests
 
@@ -123,7 +134,7 @@ Do not bypass the lock.
 | Spec | Launches Joplin with | Covers |
 | --- | --- | --- |
 | `e2e/chip.spec.ts` | defaults | chip renders in the native pill slot; updates on note switch; survives viewer-only layout; hides the native pill; left click filters and keeps the note |
-| `e2e/secondary-window.spec.ts` | defaults | two editor windows on notes in different notebooks: each names its OWN notebook in both focus states, and the secondary chip is inert |
+| `e2e/secondary-window.spec.ts` | defaults | two editor windows on notes in different notebooks: each names its OWN notebook in both focus states; a left click and a double click on the SECONDARY window's chip navigate the MAIN window (and the double click also marks the row in its note list) while the secondary window keeps its note; a right click opens the move picker in the secondary window itself |
 | `e2e/actions.spec.ts` | defaults | single click filters without stealing focus; double click reveals (the note list takes focus and marks the row); right click opens the folder picker and cancelling moves nothing |
 | `e2e/live-refresh.spec.ts` | defaults | the chip follows a note MOVED to another notebook (event-driven), and picks up a notebook RENAME (which fires no plugin event, so only the poll catches it) |
 | `e2e/path-mode.spec.ts` | `pathMode: 'full'` | `Alpha / Beta` for a nested notebook |
@@ -135,6 +146,17 @@ note rather than the focused window's (see point 4 above). The click specs asser
 never timers — the 250 ms single/double debounce is proven by whether the note list takes focus and
 marks the row (`aria-activedescendant`), because both gestures call `openNote` and only reveal calls
 `focusElementNoteList`.
+
+One thing that spec deliberately does NOT claim is that the focus HAND-OFF happened. Under a bare
+Xvfb server there is no window manager, so Joplin's root redux state stays the main window's for the
+whole run: `page.bringToFront()` and an in-renderer `window.focus()` were both measured against the
+plugin's own view of `workspace.selectedNote()` and neither makes Electron fire the focus event that
+dispatches `WINDOW_FOCUS`, and every document reports `hasFocus() === true` at once. What the spec
+does prove is the rest of the path — the chip is live in a secondary window, the hand-off's
+confirmation is satisfied (an unconfirmed hand-off aborts the action, so a regression there shows up
+as nothing moving), and the effect lands in the main window. That asymmetry is also why the plugin
+confirms the hand-off by observing Joplin's root state rather than by asking about focus: the same
+check runs in both environments and is merely already satisfied in this one.
 
 Each `test.describe` that needs a different configuration launches its own Joplin and seeds the
 settings into its profile. That is not merely a convenience — **a Whereabouts setting cannot be

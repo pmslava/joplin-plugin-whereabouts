@@ -6,6 +6,43 @@ All notable changes to Whereabouts are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] — Unreleased
+
+Part A of the secondary-window rework. Part B will add the Cockpit integration for the same case.
+
+### Changed
+
+- **Left click and double click now work in a secondary editor window** (Note → Open in new
+  window). They were the two actions still disabled there in 0.2.1, because they are navigation:
+  Joplin keeps one redux store whose ROOT state is the FOCUSED window's (the `WINDOW_FOCUS` reducer
+  swaps window slices in and out of root), every command reads and writes that one store, and a
+  plugin cannot pass a window id — so `openNote` called from a detached editor would have
+  rearranged that window instead of the main one.
+
+  Whereabouts now hands focus to the main window first and runs the action there, so a click on a
+  secondary window's chip brings the main window forward and takes it to the notebook (and, on a
+  double click, reveals the note in the note list) while the secondary window stays on the note you
+  were reading. The switch is borrowed from core's `focusElementSideBar`, which calls
+  `bridge().switchToMainWindow()`; `focusElementNoteList` carries the same side effect but also
+  focuses and marks the note-list row, which is exactly what separates a single click from a double
+  click here, so it is not used for the switch.
+
+  The hand-off is **verified, not assumed**: before anything is navigated the plugin waits — by
+  polling for the effect, not by sleeping — until Joplin's root state really is the main window's,
+  which it can tell because each editor now reports whether it is in a secondary window, so the note
+  the main window is holding is known and can be compared against `workspace.selectedNote()`. If
+  that cannot be confirmed within the budget (the main window has no note open in the Markdown
+  editor, or the sidebar is hidden so the switch command short-circuits) both windows are left
+  untouched and the reason is logged with the usual `[whereabouts]` prefix.
+
+  Right-click to move is unchanged from 0.2.1: it stays in the window you clicked in, where its
+  picker belongs. The chip in a secondary window is now an ordinary live chip — the "-move-only"
+  tooltip and menu cursor are gone, and its tooltip is the same as everywhere else.
+
+  All the existing guards still apply everywhere: conflict notes, notes in the trash and notes in a
+  read-only share stay fully inert.
+
+
 ## [0.2.1] — 2026-09-03
 
 ### Changed
@@ -118,5 +155,6 @@ First working version. Not yet published to the Joplin plugin repository.
   doing nothing.
 
 [Unreleased]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.1...HEAD
+[0.3.0]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.1...HEAD
 [0.2.1]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pmslava/joplin-plugin-whereabouts/releases/tag/v0.2.0
