@@ -242,14 +242,67 @@ class TitleChip {
 	}
 
 	/**
+	 * Where the note title's GLYPHS actually end, in viewport coordinates.
+	 *
+	 * NOT `input.getBoundingClientRect().bottom`. Joplin's title input carries 5px of its own bottom
+	 * padding and is 38px tall around a ~23px line box, so its border-box bottom sits roughly 12px
+	 * BELOW the last inked pixel of the title. Spacing measured from the box is therefore invisible
+	 * to the reader: it looked balanced in the DOM while the eye saw ~11px of air above the chip and
+	 * ~4px below it. The rule is about ink, so this is measured in ink.
+	 *
+	 * Canvas text metrics give the ink extent directly. The baseline is derived the way Chromium lays
+	 * a single-line input out: one line box, centred in the content box. `actualBoundingBoxDescent`
+	 * is the CURRENT title's ink below that baseline (0 for "Note in Beta", more for a descender), so
+	 * the chip tracks the text it is actually sitting under. Returns null when metrics are
+	 * unavailable, and the caller falls back to the box edge.
+	 */
+	private titleInkBottom(input: HTMLInputElement): number | null {
+		let ctx: CanvasRenderingContext2D | null = null;
+		try {
+			ctx = this.ownerDoc.createElement('canvas').getContext('2d');
+		} catch (error) {
+			return null;
+		}
+		if (!ctx) return null;
+
+		const cs = this.ownerWin.getComputedStyle(input);
+		ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+		const metrics = ctx.measureText(input.value || 'X');
+		const ascent = metrics.fontBoundingBoxAscent;
+		const descent = metrics.fontBoundingBoxDescent;
+		const inkDescent = metrics.actualBoundingBoxDescent;
+		const usable = [ascent, descent, inkDescent].every(
+			(n) => typeof n === 'number' && Number.isFinite(n),
+		);
+		if (!usable) return null;
+
+		const rect = input.getBoundingClientRect();
+		const borderTop = parseFloat(cs.borderTopWidth) || 0;
+		const borderBottom = parseFloat(cs.borderBottomWidth) || 0;
+		const padTop = parseFloat(cs.paddingTop) || 0;
+		const padBottom = parseFloat(cs.paddingBottom) || 0;
+		const contentTop = rect.top + borderTop + padTop;
+		const contentHeight = rect.height - borderTop - borderBottom - padTop - padBottom;
+
+		const lineBox = ascent + descent;
+		const baseline = contentTop + Math.max(0, (contentHeight - lineBox) / 2) + ascent;
+		return baseline + inkDescent;
+	}
+
+	/**
 	 * Make the chip's row sit on Joplin's own vertical rhythm, and keep its left edge on the column.
 	 *
-	 * THE RULE (this is the acceptance criterion, measured on rendered boxes):
-	 *     A = chipHost.top    − titleInput.bottom      (empty space above the chip)
-	 *     B = editorToolbar.top − chipRow.bottom       (empty space below the chip)
-	 *     A must equal B, and both must equal the gap a single-line layout has between the title
-	 *     input and the editor toolbar — so the chip reads as one more line in the same grid, not
-	 *     as a banner wedged in with more air above it than below.
+	 * THE RULE (the acceptance criterion, measured in INK — empty pixels the reader actually sees):
+	 *     A = chipRow.top       − titleTextInkBottom   (blank space above the chip)
+	 *     B = editorToolbar.top − chipRow.bottom       (blank space below the chip)
+	 *     A must equal B, and both must equal the blank space a single-line layout leaves between
+	 *     the title's glyphs and the toolbar band — so the chip reads as one more line in the same
+	 *     grid, not as a banner wedged in with more air above it than below.
+	 *
+	 * "Ink" is the whole point of the top edge. Measuring from the title INPUT's box bottom looks
+	 * balanced in the DOM and is wrong on screen: that box extends ~12px past the last inked pixel
+	 * (its own padding plus half-leading), so a box-balanced layout shows the reader far more air
+	 * above the chip than below it. See titleInkBottom().
 	 *
 	 * WHY THIS IS MEASURED RATHER THAN HARD-CODED: the space above the chip is whatever the title
 	 * row leaves under the input (the row is `align-items: center`, and the note toolbar beside the
@@ -312,14 +365,20 @@ class TitleChip {
 		// The chip is usually the shorter of the two and is centred in the line, so measuring from
 		// its own top would mistake that centring offset for empty space above the row.
 		const groupRect = compact && group ? group.getBoundingClientRect() : null;
-		const rowTop = groupRect ? Math.min(hostRect.top, groupRect.top) : hostRect.top;
+		// The space above is measured to the CHIP's own box — that is the edge the reader sees, and
+		// the chip can sit lower than its line's top if something taller shares the line. The space
+		// below is measured from whichever of the two reaches lower, so the gap is never overstated.
+		const rowTop = hostRect.top;
 		const rowBottom = groupRect ? Math.max(hostRect.bottom, groupRect.bottom) : hostRect.bottom;
 
 		const styles = this.ownerWin.getComputedStyle(compact ? wrapper : this.host);
 		const appliedAbove = parseFloat(compact ? styles.rowGap : styles.marginTop) || 0;
 		const appliedBelow = parseFloat(compact ? styles.paddingBottom : styles.marginBottom) || 0;
 
-		const naturalAbove = rowTop - inputRect.bottom - appliedAbove;
+		// Ink, not box: see titleInkBottom(). Falling back to the box edge keeps the chip placed
+		// (just less precisely) if canvas metrics are ever unavailable.
+		const titleBottom = this.titleInkBottom(input as HTMLInputElement) ?? inputRect.bottom;
+		const naturalAbove = rowTop - titleBottom - appliedAbove;
 		const naturalBelow = toolbarRect.top - rowBottom - appliedBelow;
 
 		// Put the other side's natural gap on this side; both then equal naturalAbove + naturalBelow.

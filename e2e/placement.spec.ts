@@ -10,12 +10,12 @@ import {
 	expandAllNotebooks,
 	measureInlineRightCentring,
 	measureRowSpacing,
-	measureSingleLineGap,
 	selectNoteByTitle,
 	selectNotebookByTitle,
 	waitForChip,
 } from './helpers';
 import { readSingleLineGap, recordSingleLineGap } from './rhythm';
+import { measureInkGaps, measureReferenceInkGap } from './ink';
 
 /**
  * All four placements, each in its own Joplin because the placement is read from the profile at
@@ -67,14 +67,14 @@ test.describe('placement: inline-right', () => {
 			`chip centre ${c.chipCentre} vs toolbar button centre ${c.buttonCentre}`,
 		).toBeLessThanOrEqual(1);
 
-		// This is the rhythm every other placement has to match: with the chip inside the title row,
-		// the space between the title and the editor toolbar is one plain line gap. Slava called this
-		// one good, so it is the reference. Hand it to the chip-row placements.
-		const gap = await measureSingleLineGap(win);
-		expect(gap, 'single-line gap measured').toBeGreaterThanOrEqual(0);
+		// The reference the chip-row placements must reproduce: with the chip inside the title row,
+		// the BLANK PIXELS between the title's glyphs and the editor toolbar band. Slava called this
+		// placement's spacing good, so this is Joplin's own rhythm. Measured in ink, not boxes.
+		const gap = await measureReferenceInkGap(win);
+		expect(gap, 'reference ink gap measured').toBeGreaterThanOrEqual(0);
 		recordSingleLineGap(gap);
 		// eslint-disable-next-line no-console
-		console.log(`[rhythm] inline-right single-line gap = ${gap.toFixed(2)}px`);
+		console.log(`[ink] G_ref (inline-right, title glyphs -> toolbar band) = ${gap.toFixed(2)}px`);
 
 		await captureTitleArea(win, 'inline-right');
 	});
@@ -95,23 +95,27 @@ test.describe('placement: below-title (default)', () => {
 		const { win } = joplin;
 		expect(await chipPosition(win)).toBe('below-title');
 
-		const m = await measureRowSpacing(win);
-		expect(m.found, 'title bar, chip and editor toolbar all present').toBe(true);
-		// eslint-disable-next-line no-console
-		console.log(`[rhythm] below-title A=${m.above.toFixed(2)}px B=${m.below.toFixed(2)}px`);
-
-		// THE acceptance criterion: the empty space above the chip equals the space below it...
-		expect(
-			Math.abs(m.above - m.below),
-			`A (above) ${m.above} vs B (below) ${m.below}`,
-		).toBeLessThanOrEqual(1);
-
-		// ...and both equal the plain single-line gap, so the chip row sits on Joplin's own rhythm
-		// rather than reading as a banner with more air on one side.
+		const ink = await measureInkGaps(win);
+		expect(ink.found, 'title text, chip and toolbar band all located in the screenshot').toBe(true);
 		const reference = readSingleLineGap();
 		expect(reference, 'inline-right spec must run first to record the reference gap').not.toBeNull();
-		expect(Math.abs(m.above - (reference as number)), `A ${m.above} vs single-line gap ${reference}`).toBeLessThanOrEqual(1);
-		expect(Math.abs(m.below - (reference as number)), `B ${m.below} vs single-line gap ${reference}`).toBeLessThanOrEqual(1);
+		// eslint-disable-next-line no-console
+		console.log(
+			`[ink] below-title G_above=${ink.above.toFixed(2)}px G_below=${ink.below.toFixed(2)}px G_ref=${(reference as number).toFixed(2)}px`,
+		);
+
+		// THE acceptance criterion, in pixels the reader actually sees.
+		expect(
+			Math.abs(ink.above - ink.below),
+			`G_above ${ink.above} vs G_below ${ink.below}`,
+		).toBeLessThanOrEqual(1);
+		expect(
+			Math.abs(ink.above - (reference as number)),
+			`G_above ${ink.above} vs G_ref ${reference}`,
+		).toBeLessThanOrEqual(1);
+
+		const m = await measureRowSpacing(win);
+		expect(m.found, 'title bar, chip and editor toolbar all present').toBe(true);
 
 		// The left edge still has to line up with the title text and the editor toolbar.
 		expect(
@@ -152,20 +156,31 @@ test.describe('placement: below-title-compact', () => {
 		expect(layout.chipAndIconsSameRow, 'chip and icons share the second row').toBe(true);
 		expect(layout.chipLeftOfIcons, 'chip on the left, icons pushed right').toBe(true);
 
-		// Same vertical rule as below-title, with the chip row's bottom taken as the lower of the chip
-		// and the icons that now share its line.
-		const m = await measureRowSpacing(win, true);
-		expect(m.found, 'title bar, chip and editor toolbar all present').toBe(true);
-		// eslint-disable-next-line no-console
-		console.log(`[rhythm] below-title-compact A=${m.above.toFixed(2)}px B=${m.below.toFixed(2)}px`);
-		expect(
-			Math.abs(m.above - m.below),
-			`A (above) ${m.above} vs B (below) ${m.below}`,
-		).toBeLessThanOrEqual(1);
+		// Same rule as below-title, measured the same way.
+		const ink = await measureInkGaps(win, true);
+		expect(ink.found, 'title text, chip and toolbar band all located in the screenshot').toBe(true);
 		const reference = readSingleLineGap();
 		expect(reference, 'inline-right spec must run first to record the reference gap').not.toBeNull();
-		expect(Math.abs(m.above - (reference as number)), `A ${m.above} vs single-line gap ${reference}`).toBeLessThanOrEqual(1);
-		expect(Math.abs(m.below - (reference as number)), `B ${m.below} vs single-line gap ${reference}`).toBeLessThanOrEqual(1);
+		// eslint-disable-next-line no-console
+		console.log(
+			`[ink] below-title-compact G_above=${ink.above.toFixed(2)}px G_below=${ink.below.toFixed(2)}px G_ref=${(reference as number).toFixed(2)}px iconsTallerBy=${ink.iconsTallerBy.toFixed(2)}px`,
+		);
+
+		expect(
+			Math.abs(ink.above - ink.below),
+			`G_above ${ink.above} vs G_below ${ink.below}`,
+		).toBeLessThanOrEqual(1);
+		expect(
+			Math.abs(ink.above - (reference as number)),
+			`G_above ${ink.above} vs G_ref ${reference}`,
+		).toBeLessThanOrEqual(1);
+
+		// The icons moved onto the chip's line must not make that line taller than the chip itself,
+		// or the gap below the chip would be set by them rather than by the rule above.
+		expect(
+			ink.iconsTallerBy,
+			`the moved icons are ${ink.iconsTallerBy}px taller than the chip's box`,
+		).toBeLessThanOrEqual(2);
 
 		await captureTitleArea(win, 'below-title-compact');
 	});

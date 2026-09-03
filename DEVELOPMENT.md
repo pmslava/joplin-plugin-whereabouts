@@ -190,18 +190,34 @@ Three things here are load-bearing and easy to break:
      exists while the theme object carries `editorPaddingLeft`, and a custom theme or user
      stylesheet can leave it disagreeing with the value core actually used for the editor column.
      So the chip also measures `#CodeMirrorToolbar` and nudges its padding to match.
-   - *Vertical.* The acceptance criterion is that the empty space **above** the chip
-     (`chipHost.top − titleInput.bottom`) equals the space **below** it
-     (`#CodeMirrorToolbar.top − chipRow.bottom`), and that both equal the gap a single-line layout
-     leaves between the title and the toolbar. Symmetric padding on the chip cannot achieve this —
-     padding is inside the host box, so it never touches either gap. The spacing that does is
-     outside the box, and how much is already there depends on the title row's `align-items:
-     center` and on the editor container, i.e. on the theme. So it is measured: with `A0`/`B0` the
-     natural gaps, putting `B0` above and `A0` below makes both sides `A0 + B0` — exactly the space
-     that existed before the chip row was inserted. No stored state, converges in one pass, never
-     negative. `below-title` spends it on the host's margins; the compact layout uses the wrapper's
-     `row-gap` and `padding-bottom`, because its host is a flex item on a centred line where a
-     margin does not translate 1:1 into position.
+   - *Vertical.* The criterion is **ink**, not boxes: the blank pixels above the chip
+     (`chipTop − lastInkedRowOfTheTitleText`) must equal the blank pixels below it
+     (`#CodeMirrorToolbar.top − chipRow.bottom`), and both must equal the blank band a single-line
+     layout leaves between the title's glyphs and the toolbar band (13px on the shipped theme).
+
+     Measuring from `input.title-input.bottom` is the trap, and it is worth understanding before
+     touching this: the title input is 38px tall around a ~23px line box and carries 5px of its own
+     bottom padding, so its border box ends about 12px BELOW the last inked pixel. A layout balanced
+     on boxes measures A = B = 0 and still shows the reader ~11px of air above the chip and ~4px
+     below. So the plugin gets the title's ink extent from canvas text metrics
+     (`titleInkBottom()`), and the E2E checks the result by decoding a screenshot and counting
+     ink-free rows (`e2e/ink.ts`) — two independent methods, so a shared mistake shows up as a
+     failure rather than as agreement.
+
+     Symmetric padding on the chip cannot achieve any of this: padding is inside the host box, so it
+     never touches either gap. The spacing that does is outside the box, and how much is already
+     there depends on the title row's `align-items: center` and on the editor container, i.e. on the
+     theme. So it is measured: with `A0`/`B0` the natural gaps, putting `B0` above and `A0` below
+     makes both sides `A0 + B0` — exactly the space that existed before the chip row was inserted.
+     No stored state, converges in one pass, never negative. `below-title` spends it on the host's
+     margins; the compact layout uses the wrapper's `row-gap` and `padding-bottom`, because its host
+     is a flex item on a centred line where a margin does not translate 1:1 into position.
+
+     The compact row has one extra requirement: the icons moved onto it must not be taller than the
+     chip, or they, not the rule, would set the gap below. Core's note toolbar carries ~6px of
+     vertical padding that is invisible on the 38px title row but makes the icons ~15px taller than
+     the chip on this one, so the compact CSS drops that padding and gives the chip the toolbar's
+     own height.
 
    Do not delete either because "the CSS already does it" — the CSS is right on the shipped themes
    and was wrong on a real user profile.

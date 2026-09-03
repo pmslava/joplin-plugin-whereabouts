@@ -32,8 +32,8 @@ The title gets the full width; the date and the note-toolbar icons drop onto the
 *(These are captured from the running app by the end-to-end suite, so they always show the current
 build.)*
 
-In every placement the chip sits on Joplin's own vertical rhythm: the empty space above the chip's
-row and the space below it are equal, and both match the gap a normal single-line title leaves
+In every placement the chip sits on Joplin's own vertical rhythm: the blank space above the chip's
+row and the blank space below it are equal, and both match the gap a normal single-line title leaves
 before the editor toolbar — so the chip reads as one more line of the editor, not as a banner.
 
 ## What it does

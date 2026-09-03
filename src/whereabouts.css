@@ -260,6 +260,29 @@ html.whereabouts-hide-native
 }
 
 /*
+ * The note toolbar carries `padding: var(--joplin-toolbar-padding)` — ~6px above and below its
+ * buttons. On the title row that is invisible, because the 38px-tall title input sets the row
+ * height anyway. On the CHIP's row it is not: it makes the icons ~15px taller than the chip, which
+ * both pushes the (vertically centred) chip down out of alignment and hands the gap below the chip
+ * over to the icons instead of to the spacing rule. Dropping the vertical padding puts the icons
+ * within a pixel of the chip's own height. Scoped to the compact placement only.
+ */
+.note-title-wrapper.whereabouts-compact .note-title-info-group .editor-toolbar {
+	padding-top: 0;
+	padding-bottom: 0;
+}
+
+/*
+ * ...and the last ~3px are closed from OUR side rather than by shrinking core's buttons: the chip
+ * takes the toolbar's own height, so the two things sharing this row are exactly as tall as each
+ * other. That keeps the row's height defined by the chip (so the gap below it is set by the spacing
+ * rule, not by the icons) and incidentally makes the chip and the icons line up.
+ */
+.note-title-wrapper.whereabouts-compact .whereabouts-chip {
+	min-height: var(--joplin-toolbar-height);
+}
+
+/*
  * Below 800px core stacks the whole title row into a column and gives the info group a full-width
  * top border. That undoes the compact layout — the chip and the icons would end up on separate
  * lines again, which is the opposite of what this placement is for. Keep the two-line arrangement,

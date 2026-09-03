@@ -36,12 +36,18 @@ Placements rework, after 0.1.0 was used on a real profile.
   overflow, so the label was squeezed to zero width with no ellipsis to show anything was missing.
   The chip now refuses to shrink or be clamped in every placement. `showIcon` toggles the glyph
   only; the name has no setting and is never hidden.
-- **`below-title` alignment.** The chip's left edge now lands exactly on the title text and the
-  editor toolbar, and the gaps above and below it are equal. As well as asking for Joplin's editor
-  padding (with a fallback, since that CSS variable only exists while the theme defines it), the
-  chip measures the toolbar at runtime and corrects itself — a custom theme or user stylesheet can
-  otherwise leave the variable disagreeing with the value core actually used for the editor column,
-  which is what put the chip a few pixels out of line on a real profile.
+- **Spacing around the chip's row.** The blank space above the chip now equals the blank space
+  below it, and both match the gap a normal single-line title leaves before the editor toolbar
+  (13px on the shipped theme) — so the chip reads as one more line of the editor rather than a
+  banner with more air on one side. This is measured in *ink*: Joplin's title input extends about
+  12px below the last inked pixel of the title, so balancing the boxes still looked lopsided on
+  screen. In the compact placement the moved icons are also brought to the chip's own height, so
+  they cannot set the gap below it.
+- **`below-title` left edge.** The chip now lands exactly on the title text and the editor toolbar.
+  As well as asking for Joplin's editor padding (with a fallback, since that CSS variable only
+  exists while the theme defines it), the chip measures the toolbar at runtime and corrects itself
+  — a custom theme or user stylesheet can otherwise leave the variable disagreeing with the value
+  core actually used for the editor column.
 
 
 ## [0.1.0] — 2026-09-03
