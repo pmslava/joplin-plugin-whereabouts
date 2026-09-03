@@ -41,21 +41,30 @@ The version lives in **four** places, and a CI check fails the build unless all 
 - `package-lock.json` top-level `.version`.
 - `package-lock.json` `.packages[""].version` (the root-package entry).
 
-Bump the first two with the generator-joplin helper:
+> **`npm run updateVersion` is an incrementer, not a syncer, and it knows nothing about the
+> lockfile.** It adds one to the LAST component of `package.json`'s version and, separately, to the
+> last component of `src/manifest.json`'s version, then warns if the two results disagree — see
+> `increaseVersion` / `updateVersion` in `webpack.config.js`. So it is only useful for a patch bump
+> from an already-matching pair; for a minor or major bump, or to repair a mismatch, it makes things
+> worse.
+
+For a patch bump from a matching pair:
 
 ```
 npm run updateVersion
 ```
 
-> **`npm run updateVersion` only touches `package.json` and `src/manifest.json`.** It does **not**
-> update `package-lock.json`, so the lockfile's two version fields drift silently. **Every bump must
-> be followed by refreshing the lockfile** so all four stay equal:
->
-> ```
-> npm install --package-lock-only     # rewrites .version + .packages[""].version
-> ```
->
-> The CI check will fail the build if you forget.
+Otherwise set `package.json` and `src/manifest.json` to the intended version by hand. (0.2.1 → 0.3.0
+was done that way: `updateVersion` produced 0.3.1 and 0.2.2 and reported them out of sync.)
+
+**Either way, finish by refreshing the lockfile**, which nothing above touches, so all four places
+stay equal:
+
+```
+npm install --package-lock-only     # rewrites .version + .packages[""].version
+```
+
+The CI check will fail the build if you forget.
 
 On an actual release, `publish.yml` also derives the version from the git tag and rewrites
 `package.json` + `src/manifest.json` in CI, so the tag is the source of truth for those two — but keep

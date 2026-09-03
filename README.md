@@ -103,10 +103,13 @@ These are structural, not bugs to be fixed later:
   them act on the **main** window, because that is where the sidebar and the note list live: a left
   click or a double click brings the main window to the front and takes it to the notebook and the
   note, while the secondary window stays on its own note. Right-click to move stays in the window
-  you clicked in — the picker opens there and files the note you are looking at. The hand-off is
-  verified before anything moves; in the rare case it cannot be confirmed (the main window has no
-  note open in the Markdown editor, or the sidebar is hidden) the click does nothing and says so in
-  the console rather than navigating the wrong window.
+  you clicked in — the picker opens there and files the note you are looking at.
+
+  The plugin waits for proof that the main window really took focus before it navigates anything,
+  and gives up rather than guess. So in the rare case where it cannot get that proof — the main
+  window has no note open in the Markdown editor — the click does nothing at all. Nothing is shown
+  on screen when that happens; the reason is written to the developer console (**Help → Toggle
+  development tools**, Console tab), which is also where every other Whereabouts diagnostic goes.
 - **Conflict notes, notes in the trash, and notes in a read-only share** show their location but are
   likewise inert — filtering to, revealing in, or moving out of those would not do what you meant,
   and Joplin would reject the move.

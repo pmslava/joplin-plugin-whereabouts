@@ -21,7 +21,23 @@ npm run dist
 - `publish/io.github.pmslava.whereabouts.json` — the plugin-info file used by the Joplin plugin
   repository
 
-`npm run updateVersion` syncs `package.json` and `src/manifest.json` version numbers.
+### Version numbers
+
+The version lives in **four** places and a CI check fails the build unless all four agree:
+`package.json` `"version"`, `src/manifest.json` `"version"`, `package-lock.json` top-level
+`.version`, and `package-lock.json` `.packages[""].version`.
+
+`npm run updateVersion` does **not** sync them. It INCREMENTS the last component of each of the
+first two files independently and then warns if the results differ (`webpack.config.js`,
+`increaseVersion` / `updateVersion`), so it is only useful for a patch bump from an already-matching
+pair — and it never touches the lockfile. For anything else, and for a minor or major bump, set
+`package.json` and `src/manifest.json` to the intended version by hand. Either way, finish with:
+
+```bash
+npm install --package-lock-only     # rewrites the lockfile's two version fields
+```
+
+See [PUBLISHING.md](PUBLISHING.md#version-bump).
 
 ## Installing a local build
 
@@ -69,17 +85,28 @@ before changing them:
    state, and Joplin's `WINDOW_FOCUS` reducer swaps the focused window's state into root, so it
    answers for whichever window has focus. With a secondary editor window open, a plugin-side guess
    would give both chips the focused window's notebook.
-5. **A click in a secondary window runs `focusElementSideBar` first, and then waits for evidence
-   before it navigates** (`handOverToMainWindow` in `src/index.ts`). Same root cause as point 4 from
-   the other side: `openNote` dispatches into the one store whose root is the focused window's
-   state, and a plugin cannot pass a window id, so the main window has to be focused before the
-   action can mean what the user meant. `focusElementSideBar` is used because it calls
-   `bridge().switchToMainWindow()` with no other navigation; `focusElementNoteList` carries the same
-   side effect *and* marks the note-list row, which is the one thing that distinguishes this
-   plugin's single click from its double click. The wait is a poll for the state swap (root state's
-   selected note becomes the note the main window's editor reports), never a sleep and never a
-   focus query — `document.hasFocus()` is not a plugin-reachable fact and is not decisive anyway.
-   If it cannot be confirmed, nothing is navigated.
+5. **A click in a secondary window switches windows first, and then waits for PROOF before it
+   navigates** (`handOverToMainWindow` in `src/index.ts`). Same root cause as point 4 from the other
+   side: `openNote` dispatches into the one store whose root is the focused window's state, and a
+   plugin cannot pass a window id, so the main window has to be focused before the action can mean
+   what the user meant. Three parts are each easy to get wrong:
+   - **The switch** is `focusElementSideBar`, which calls `bridge().switchToMainWindow()` and
+     navigates nothing else. `focusElementNoteList` carries the same side effect but ALSO focuses
+     and marks the note-list row — the one thing that distinguishes this plugin's single click from
+     its double click — so it is used only when the sidebar is hidden, in which case
+     `focusElementSideBar` short-circuits and does nothing at all. That condition is read from
+     `ui.layout` (a global setting MainScreen persists), because the layout state the command
+     itself tests is not reachable from a plugin.
+   - **The proof** is a ping with a nonce: the plugin pings the focused editor through
+     `editor.execCommand`, whose runtime is chosen by which document has focus, and waits for that
+     nonce to come back from an editor reporting `secondary: false`. Only an echo counts. Comparing
+     Joplin's selected note against the main window's note is NOT proof and was the first version of
+     this: the two agree trivially whenever both windows show the same note, which is the normal
+     state right after "Open in new window" and after every successful click.
+   - **The finish** is `focusElementNoteBody` after a single click, because the switch had to focus
+     something (the sidebar tree) and a single click is defined by not moving focus.
+   If the proof never arrives, nothing is navigated and the console names which of the three causes
+   it was.
 
 ## End-to-end tests
 
@@ -147,31 +174,23 @@ never timers — the 250 ms single/double debounce is proven by whether the note
 marks the row (`aria-activedescendant`), because both gestures call `openNote` and only reveal calls
 `focusElementNoteList`.
 
-One thing that spec deliberately does NOT claim is that the focus HAND-OFF happened. Under a bare
-Xvfb server there is no window manager, so Joplin's root redux state stays the main window's for the
-whole run: `page.bringToFront()` and an in-renderer `window.focus()` were both measured against the
-plugin's own view of `workspace.selectedNote()` and neither makes Electron fire the focus event that
-dispatches `WINDOW_FOCUS`, and every document reports `hasFocus() === true` at once. What the spec
-does prove is the rest of the path — the chip is live in a secondary window, the hand-off's
-confirmation is satisfied (an unconfirmed hand-off aborts the action, so a regression there shows up
-as nothing moving), and the effect lands in the main window. That asymmetry is also why the plugin
-confirms the hand-off by observing Joplin's root state rather than by asking about focus: the same
-check runs in both environments and is merely already satisfied in this one.
+One thing that spec cannot claim is that the focus HAND-OFF happened, and no test in this harness
+can. Under a bare Xvfb server there is no window manager, so Joplin's root redux state stays the
+main window's for the whole run: `page.bringToFront()` and an in-renderer `window.focus()` were both
+measured against the plugin's own view of `workspace.selectedNote()` and neither makes Electron fire
+the focus event that dispatches `WINDOW_FOCUS`, and every document reports `hasFocus() === true` at
+once. **The transfer itself is verified only by running it by hand on a real desktop.** Delete the
+hand-off and both click tests would still pass, because under Xvfb `openNote` reaches the main
+window either way.
 
-Each `test.describe` that needs a different configuration launches its own Joplin and seeds the
-settings into its profile. That is not merely a convenience — **a Whereabouts setting cannot be
-changed at runtime from this harness at all**:
-
-- Joplin's Options screen is opened by an Electron *menu item* (`Tools → Options`). Its `Ctrl+,`
-  accelerator is handled in the browser process, so a Playwright-synthesised key never reaches it;
-  verified empirically, and there is no in-DOM menu bar to click either.
-- The Data API has no settings route (ping / notes / folders / tags / resources / master_keys /
-  search / services / auth / events / revisions / mcp).
-
-So the settings themselves are asserted from seeded launches, and the live-update PIPELINE they
-travel down — `settings.onChange` → refresh ping → the editor re-asks → the chip re-renders — is
-asserted end to end by `live-refresh.spec.ts`, which drives the same pipeline with data changes.
-If a route into Options ever appears, that spec is where the settings half belongs.
+What the specs DO prove, and would catch: that the chip is live in a secondary window and knows it
+is in one (`data-secondary`, asserted per window — that assertion exists because removing the
+`-move-only` class removed the only other outside evidence that the detection works); that the
+plugin's confirmation is reachable and satisfied, since an unconfirmed hand-off refuses to navigate
+at all, so a broken probe shows up as nothing moving; that the effect lands in the main window's
+sidebar, editor and note list; that the secondary window keeps its own note; and that the single
+click leaves the main window's note list WITHOUT focus while the double click leaves it with focus
+and the row marked — the cross-window version of the distinction `actions.spec.ts` makes.
 
 Run one spec while iterating:
 

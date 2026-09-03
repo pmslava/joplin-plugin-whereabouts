@@ -4,11 +4,13 @@ All notable changes to Whereabouts are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [Unreleased]
-
 ## [0.3.0] — Unreleased
 
-Part A of the secondary-window rework. Part B will add the Cockpit integration for the same case.
+Part A of the secondary-window rework. Part B does not change what the Cockpit calls do — they
+already fire on every path, from either window — it adds the end-to-end coverage for them: a
+throwaway profile with Cockpit 2.4.0 installed alongside Whereabouts, asserting that a left click
+filters Cockpit's panel to the notebook and a double click reveals the note there, plus whatever
+Cockpit's reveal turns out to need from this side.
 
 ### Changed
 
@@ -23,21 +25,38 @@ Part A of the secondary-window rework. Part B will add the Cockpit integration f
   secondary window's chip brings the main window forward and takes it to the notebook (and, on a
   double click, reveals the note in the note list) while the secondary window stays on the note you
   were reading. The switch is borrowed from core's `focusElementSideBar`, which calls
-  `bridge().switchToMainWindow()`; `focusElementNoteList` carries the same side effect but also
-  focuses and marks the note-list row, which is exactly what separates a single click from a double
-  click here, so it is not used for the switch.
+  `bridge().switchToMainWindow()`; when the sidebar is hidden that command does nothing at all, so
+  the fallback is `focusElementNoteList`, which carries the same switch. `focusElementNoteList` is
+  not the first choice because it also focuses and marks the note-list row, which is exactly what
+  separates a single click from a double click here.
 
-  The hand-off is **verified, not assumed**: before anything is navigated the plugin waits — by
-  polling for the effect, not by sleeping — until Joplin's root state really is the main window's,
-  which it can tell because each editor now reports whether it is in a secondary window, so the note
-  the main window is holding is known and can be compared against `workspace.selectedNote()`. If
-  that cannot be confirmed within the budget (the main window has no note open in the Markdown
-  editor, or the sidebar is hidden so the switch command short-circuits) both windows are left
-  untouched and the reason is logged with the usual `[whereabouts]` prefix.
+  **The hand-off is proved, not assumed, and not with a sleep.** The plugin pings the focused
+  window's editor with a one-off id and waits for that id to come back from an editor that says it
+  is in the MAIN window. Joplin routes `editor.execCommand` by focus — an editor whose document does
+  not have focus scores zero and cannot win the call — so an echo from the main window's editor is a
+  direct observation that the main window has focus, and therefore that its slice is the root state.
+  The id matters: every editor also polls on its own schedule, so a reply that merely arrives after
+  a ping proves nothing. The plugin re-pings across a 2.5s budget, because the first ping can
+  legitimately still reach the old window and because a main window that was minimised needs a
+  moment after being raised. If it is never confirmed, both windows are left untouched and the
+  console says which of the three causes it was: the switch command threw, the main window has no
+  Markdown editor to act in, or it never took focus. After the navigation the plugin checks once
+  that it landed — root state on the note AND the main window's editor holding it — and logs
+  precisely if not, rather than re-issuing anything.
+
+  Focus afterwards: a single click leaves the main window's note body focused, exactly as a single
+  click in the main window does, so the "single click does not steal focus" rule holds across
+  windows; a double click leaves the note list focused with the row marked, which is the whole
+  point of a double click.
+
+  Overlapping gestures are dropped while an action is in flight — the hand-off is no longer
+  instantaneous, so a second click during one would otherwise start a second, racing hand-off. A
+  double click still supersedes a single click that has not been sent yet.
 
   Right-click to move is unchanged from 0.2.1: it stays in the window you clicked in, where its
   picker belongs. The chip in a secondary window is now an ordinary live chip — the "-move-only"
-  tooltip and menu cursor are gone, and its tooltip is the same as everywhere else.
+  tooltip and menu cursor are gone, and its tooltip is the same as everywhere else. It carries a
+  `data-secondary` attribute so which-window-am-I can be asserted from outside.
 
   All the existing guards still apply everywhere: conflict notes, notes in the trash and notes in a
   read-only share stay fully inert.
@@ -154,7 +173,6 @@ First working version. Not yet published to the Joplin plugin repository.
 - Failed actions are reported to the console with a `[whereabouts]` prefix rather than silently
   doing nothing.
 
-[Unreleased]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.1...HEAD
-[0.3.0]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.1...HEAD
+[0.3.0]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pmslava/joplin-plugin-whereabouts/releases/tag/v0.2.0
