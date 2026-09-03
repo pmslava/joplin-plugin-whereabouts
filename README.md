@@ -1,0 +1,79 @@
+# Whereabouts
+
+**Always know which notebook the note you are reading lives in.**
+
+Joplin already tells you — but only sometimes. Open a note from a search result, a tag, or "All
+notes" and a blue **In: \<Notebook\>** button appears under the title. Open the same note from its own
+notebook and that button is gone, because in that view Joplin assumes you already know where you
+are. You often don't: the sidebar scrolls, notebooks nest, and a note reached by an internal link,
+the back button, or a second window arrives with no context at all.
+
+Whereabouts shows the notebook **all the time**, in the same place, and makes it do something when
+you click it.
+
+> **Screenshots pending.** Three are planned for `docs/images/`, one per placement — the chip on its
+> own row below the title, inline to the right of the title, and as the first note-toolbar item —
+> and will be added to the manifest's `screenshots` field before the plugin is published.
+<!-- TODO(0.2.0): docs/images/below-title.png, inline-right.png, toolbar-first.png -->
+
+## What it does
+
+- Puts a small notebook chip in the note title area, on every note, in every view.
+- Shows either just the notebook (**Beta**) or the whole path (**Alpha / Beta**).
+- **Left click** — select that notebook in the sidebar, keeping the note you are reading open. This
+  is exactly what Joplin's own pill does; it does not jump you to some other note.
+- **Double click** — reveal the note in the note list (and focus it there).
+- **Right click** — open Joplin's "Move to notebook" picker for this note.
+- Optionally hides Joplin's own duplicate **In: \<Notebook\>** button.
+
+If [Cockpit](https://github.com/pmslava/joplin-plugin-cockpit) is installed, a left click also
+points its panel at the same notebook and a double click reveals the note there. Without Cockpit
+nothing happens — the integration is fire-and-forget.
+
+## Settings
+
+Found under **Tools → Options → Whereabouts**. All of them apply live; no restart.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| **What to show** | Notebook name only | `Notebook name only` shows `Beta`; `Full path` shows `Alpha / Beta`. |
+| **Where to show it** | On its own row below the title | `below-title` uses the exact slot Joplin's own pill uses. `inline-right` tucks it into the title row, just right of the title. `toolbar-first` makes it the first item of the note toolbar. |
+| **Hide Joplin's own "In: \<Notebook\>" button** | On | Removes the duplicate blue button in search / tag / All-notes views. |
+| **Path separator** | ` / ` | Placed between notebook names in full-path mode. |
+| **Show the notebook icon** | On | The notebook glyph before the name. |
+
+## Installing
+
+From Joplin: **Tools → Options → Plugins**, search for *Whereabouts*.
+
+Manually: download `io.github.pmslava.whereabouts.jpl` from the
+[releases](https://github.com/pmslava/joplin-plugin-whereabouts/releases), then **Tools → Options →
+Plugins → the gear icon → Install from file**, and restart Joplin.
+
+## Limitations
+
+These are structural, not bugs to be fixed later:
+
+- **Desktop only.** On mobile the note title is a React Native field outside the editor's WebView,
+  which is the only place a plugin's code can run. (Joplin mobile already has "Reveal in notebook"
+  in the note's kebab menu.)
+- **Markdown editor only** — including Split and Viewer-only layouts, all of which work. The **Rich
+  Text (WYSIWYG) editor does not**: it is a different component with no CodeMirror instance, so no
+  plugin JavaScript runs in that window at all and no chip can appear.
+- **It depends on Joplin's internal DOM.** Joplin has no API that reaches the note title bar, so
+  Whereabouts injects into the title bar directly. The selectors it uses are verified against
+  **Joplin 3.7.x** (`app_min_version: "3.7"`). A future Joplin could rename or restructure the title
+  bar and break the chip; if that happens the plugin fails visibly (no chip) rather than quietly
+  corrupting anything.
+- **In a secondary editor window** (Note → Open in new window) the chip shows the location but is not
+  clickable, because the sidebar and note list it would act on live in the main window.
+- **Conflict notes and notes in the trash** show their location but are likewise inert — filtering to
+  or moving out of those pseudo-locations would not do what you meant.
+
+## Development
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the build, install and end-to-end test loop.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
