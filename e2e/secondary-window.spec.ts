@@ -10,6 +10,7 @@ import {
 } from './dataApi';
 import {
 	CHIP_BUTTON,
+	CHIP_HOST,
 	CHIP_LABEL,
 	SETTLE,
 	chipNoteId,
@@ -102,20 +103,25 @@ test.describe('Whereabouts — secondary editor window', () => {
 	 *
 	 * Both click tests move the main window to Beta, so each has to reset it first.
 	 *
-	 * WHAT THE TWO CLICK TESTS BELOW DO AND DO NOT PROVE. They prove the whole action path from a
-	 * secondary window: the chip is live there (it was inert before 0.3.0), the plugin's hand-off
-	 * runs and confirms — an unconfirmed hand-off aborts the action, so a failure here would show as
-	 * nothing moving — and the effect lands in the MAIN window's sidebar, editor and note list while
-	 * the secondary window keeps its own note.
+	 * WHAT THE TWO CLICK TESTS BELOW DO AND DO NOT PROVE. They do NOT prove the focus TRANSFER, and
+	 * no test in this harness can: under a bare Xvfb server with no window manager, Joplin's root
+	 * redux state stays the main window's for the whole run. `bringToFront()` (CDP) and an
+	 * in-renderer `window.focus()` were both measured against the plugin's own view of
+	 * `workspace.selectedNote()` and neither makes Electron fire the focus event that dispatches
+	 * `WINDOW_FOCUS`, and every document reports `hasFocus() === true` at the same time. Delete the
+	 * hand-off entirely and these two tests would still pass, because `openNote` reaches the main
+	 * window either way here. THE TRANSFER IS VERIFIED ONLY BY RUNNING IT BY HAND ON A REAL DESKTOP.
 	 *
-	 * They cannot prove the FOCUS TRANSFER itself, and no test in this harness can. The suite runs
-	 * under a bare Xvfb server with no window manager, where Joplin's root redux state stays the
-	 * main window's throughout: `bringToFront()` (CDP) and an in-renderer `window.focus()` were both
-	 * measured and neither makes Electron fire the focus event that dispatches `WINDOW_FOCUS`, and
-	 * every document reports `hasFocus() === true` at the same time. So the state these clicks
-	 * navigate is the main window's either way. That is precisely why the plugin confirms the
-	 * hand-off by observation rather than assuming it (see `handOverToMainWindow` in src/index.ts):
-	 * the check is the same in both environments, it is simply already satisfied in this one.
+	 * What they do prove, and would catch:
+	 *  - the chip is live in a secondary window, and knows it is in one (`data-secondary`, asserted
+	 *    per window below — that assertion exists because dropping the `-move-only` class removed
+	 *    the only other outside evidence that the window detection works at all);
+	 *  - the plugin's confirmation is reachable and satisfied: an unconfirmed hand-off refuses to
+	 *    navigate anything, so a broken probe shows up here as nothing moving;
+	 *  - the effect lands in the MAIN window's sidebar, editor and note list, and the secondary
+	 *    window keeps its own note;
+	 *  - the single/double distinction survives the crossing: the single click leaves the main
+	 *    window's note list WITHOUT focus, the double click leaves it focused with the row marked.
 	 */
 	async function armFromSecondaryWindow(): Promise<void> {
 		const { win } = joplin;
@@ -130,12 +136,22 @@ test.describe('Whereabouts — secondary editor window', () => {
 		await expect(secondary.locator(CHIP_LABEL)).toHaveText('Beta', { timeout: 30_000 });
 	}
 
+	test('each chip knows which window it is in', async () => {
+		const { win } = joplin;
+		// The entire secondary-window behaviour is keyed off this one flag (ownerDocument !== the
+		// main window's document). Every other assertion in this file would pass just as happily
+		// against a chip that had decided it was in the main window, so assert the flag itself.
+		await expect(win.locator(CHIP_HOST).first()).toHaveAttribute('data-secondary', 'false');
+		await expect(secondary.locator(CHIP_HOST).first()).toHaveAttribute('data-secondary', 'true');
+	});
+
 	test('a left click hands focus to the MAIN window and selects the notebook and note there', async () => {
 		const { win } = joplin;
 		await armFromSecondaryWindow();
 
 		// The chip is a live control in a secondary window now — no "move only" affordance left.
-		const host = secondary.locator('[data-whereabouts-chip]');
+		const host = secondary.locator(CHIP_HOST);
+		await expect(host).toHaveAttribute('data-secondary', 'true');
 		await expect(host).not.toHaveClass(/-move-only/);
 		await expect(host).not.toHaveClass(/-inert/);
 
@@ -146,6 +162,12 @@ test.describe('Whereabouts — secondary editor window', () => {
 		await expect.poll(() => selectedSidebarFolderId(win), { timeout: 30_000 }).toBe(seed.beta.id);
 		await expect.poll(() => chipNoteId(win), { timeout: 30_000 }).toBe(seed.noteInBeta.id);
 		await expect(win.locator('input.title-input')).toHaveValue(NOTE_IN_BETA_TITLE, { timeout: 30_000 });
+
+		// A single click must not steal focus, and that rule now has to hold ACROSS windows: the
+		// hand-off had to focus the main window's sidebar to switch to it, so the plugin puts focus
+		// back in the note body afterwards. If it did not, or if the gesture were routed to reveal,
+		// the note list would be holding focus here.
+		expect(await revealedNoteListId(win)).toBe('');
 
 		// ...and the secondary window is left exactly where it was, still on its own note.
 		await expect(secondary.locator('input.title-input')).toHaveValue(NOTE_IN_BETA_TITLE);
