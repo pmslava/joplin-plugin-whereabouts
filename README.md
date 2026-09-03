@@ -15,24 +15,26 @@ on the Joplin forum.
 
 ### Own row below the title (default)
 
-![The notebook chip on its own row below the note title](docs/images/placement-below-title.png)
+![The notebook chip on its own row below the note title](https://raw.githubusercontent.com/pmslava/joplin-plugin-whereabouts/main/docs/images/placement-below-title.png)
 
 ### Own row below the title, with the title-row icons moved down
 
 The title gets the full width; the date and the note-toolbar icons drop onto the chip's row.
 
-![The compact variant](docs/images/placement-below-title-compact.png)
+![The compact variant](https://raw.githubusercontent.com/pmslava/joplin-plugin-whereabouts/main/docs/images/placement-below-title-compact.png)
 
 ### Right of the title
 
-![The chip inline, to the right of the note title](docs/images/placement-inline-right.png)
+![The chip inline, to the right of the note title](https://raw.githubusercontent.com/pmslava/joplin-plugin-whereabouts/main/docs/images/placement-inline-right.png)
 
 ### First item of the editor toolbar
 
-![The chip as the first item of the editor toolbar](docs/images/placement-editor-toolbar.png)
+![The chip as the first item of the editor toolbar](https://raw.githubusercontent.com/pmslava/joplin-plugin-whereabouts/main/docs/images/placement-editor-toolbar.png)
 
 *(All four are captured from the running app by the end-to-end suite itself, against its
-`Alpha / Beta` test notebooks, so they always show what the current build actually renders.)*
+`Alpha / Beta` test notebooks, so they always show what the current build actually renders. They are
+linked by absolute URL because the npm tarball ships only the built plugin, so a relative path would
+resolve to nothing on the package page.)*
 
 In every placement the chip sits on Joplin's own vertical rhythm: the blank space above the chip's
 row and the blank space below it are equal, and both match the gap a normal single-line title leaves

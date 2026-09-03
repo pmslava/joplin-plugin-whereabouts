@@ -51,7 +51,7 @@ Placements rework, after 0.1.0 was used on a real profile.
   core actually used for the editor column.
 
 
-## [0.1.0] — 2026-09-03
+## 0.1.0 — 2026-09-03
 
 First working version. Not yet published to the Joplin plugin repository.
 
@@ -99,5 +99,4 @@ First working version. Not yet published to the Joplin plugin repository.
   doing nothing.
 
 [Unreleased]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/pmslava/joplin-plugin-whereabouts/releases/tag/v0.1.0
+[0.2.0]: https://github.com/pmslava/joplin-plugin-whereabouts/releases/tag/v0.2.0
