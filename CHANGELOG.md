@@ -6,6 +6,44 @@ All notable changes to Whereabouts are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-03
+
+Placements rework, after 0.1.0 was used on a real profile.
+
+### Added
+
+- **`below-title-compact` placement.** The chip gets its own row below the title, and the title
+  row's date label and note-toolbar icons move down onto that row, right-aligned — so the note
+  title itself gets the full width. Nothing is re-parented: the layout is CSS keyed off a marker
+  class the content script puts on `.note-title-wrapper`, because moving React's own nodes would
+  crash the editor on its next reconcile.
+- Screenshots for all four placements, captured from the running app by the end-to-end suite and
+  referenced from the manifest and the README, so they cannot drift from what the plugin renders.
+
+### Changed
+
+- **`toolbar-first` is replaced by `editor-toolbar`.** The chip now goes at the head of the EDITOR
+  toolbar (the formatting-button row, `#CodeMirrorToolbar`) instead of the note toolbar at the top
+  right of the title row, which was the wrong place for it. A stored `toolbar-first` is migrated to
+  `editor-toolbar` automatically.
+- Placement labels are clearer: "Own row below the title", "Own row below the title, title-row icons
+  moved down", "Right of the title", "First item of the editor toolbar".
+
+### Fixed
+
+- **The notebook name is now always visible.** In 0.1.0 the note-toolbar placement rendered
+  icon-only on a real profile: core's `.toolbar-button` clamps itself to a square and hides its
+  overflow, so the label was squeezed to zero width with no ellipsis to show anything was missing.
+  The chip now refuses to shrink or be clamped in every placement. `showIcon` toggles the glyph
+  only; the name has no setting and is never hidden.
+- **`below-title` alignment.** The chip's left edge now lands exactly on the title text and the
+  editor toolbar, and the gaps above and below it are equal. As well as asking for Joplin's editor
+  padding (with a fallback, since that CSS variable only exists while the theme defines it), the
+  chip measures the toolbar at runtime and corrects itself — a custom theme or user stylesheet can
+  otherwise leave the variable disagreeing with the value core actually used for the editor column,
+  which is what put the chip a few pixels out of line on a real profile.
+
+
 ## [0.1.0] — 2026-09-03
 
 First working version. Not yet published to the Joplin plugin repository.
@@ -53,5 +91,6 @@ First working version. Not yet published to the Joplin plugin repository.
 - Failed actions are reported to the console with a `[whereabouts]` prefix rather than silently
   doing nothing.
 
-[Unreleased]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/pmslava/joplin-plugin-whereabouts/releases/tag/v0.1.0

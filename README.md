@@ -11,10 +11,30 @@ the back button, or a second window arrives with no context at all.
 Whereabouts shows the notebook **all the time**, in the same place, and makes it do something when
 you click it.
 
-> **Screenshots pending.** Three are planned for `docs/images/`, one per placement — the chip on its
-> own row below the title, inline to the right of the title, and as the first note-toolbar item —
-> and will be added to the manifest's `screenshots` field before the plugin is published.
-<!-- TODO(0.2.0): docs/images/below-title.png, inline-right.png, toolbar-first.png -->
+### Own row below the title (default)
+
+![The notebook chip on its own row below the note title](docs/images/placement-below-title.png)
+
+### Own row below the title, with the title-row icons moved down
+
+The title gets the full width; the date and the note-toolbar icons drop onto the chip's row.
+
+![The compact variant](docs/images/placement-below-title-compact.png)
+
+### Right of the title
+
+![The chip inline, to the right of the note title](docs/images/placement-inline-right.png)
+
+### First item of the editor toolbar
+
+![The chip as the first item of the editor toolbar](docs/images/placement-editor-toolbar.png)
+
+*(These are captured from the running app by the end-to-end suite, so they always show the current
+build.)*
+
+In every placement the chip sits on Joplin's own vertical rhythm: the empty space above the chip's
+row and the space below it are equal, and both match the gap a normal single-line title leaves
+before the editor toolbar — so the chip reads as one more line of the editor, not as a banner.
 
 ## What it does
 
@@ -30,6 +50,12 @@ If [Cockpit](https://github.com/pmslava/joplin-plugin-cockpit) is installed, a l
 points its panel at the same notebook and a double click reveals the note there. Without Cockpit
 nothing happens — the integration is fire-and-forget.
 
+**A note on single vs double click today.** Both run the same Joplin action — select the notebook,
+keep the note open — so right now the only difference you will see is that a double click *also*
+moves focus onto the note's row in the list. They diverge properly once either Cockpit's
+`revealNote` or core's `revealInNotebook` (PR laurent22/joplin#16354) exists; Whereabouts already
+calls both and falls back silently while they don't.
+
 ## Settings
 
 Found under **Tools → Options → Whereabouts**. All of them apply live; no restart.
@@ -37,7 +63,7 @@ Found under **Tools → Options → Whereabouts**. All of them apply live; no re
 | Setting | Default | What it does |
 | --- | --- | --- |
 | **What to show** | Notebook name only | `Notebook name only` shows `Beta`; `Full path` shows `Alpha / Beta`. |
-| **Where to show it** | On its own row below the title | `below-title` uses the exact slot Joplin's own pill uses. `inline-right` tucks it into the title row, just right of the title. `toolbar-first` makes it the first item of the note toolbar. |
+| **Where to show it** | Own row below the title | Four options — see the screenshots above. *Own row below the title* uses the exact slot Joplin's own pill uses, aligned with the title text and the editor toolbar. *…with title-row icons moved down* additionally frees the whole title line for the title itself. *Right of the title* tucks the chip into the title row. *First item of the editor toolbar* puts it at the head of the formatting-button row, styled as a native toolbar button. |
 | **Hide Joplin's own "In: \<Notebook\>" button** | On | Removes the duplicate blue button in search / tag / All-notes views. |
 | **Path separator** | ` / ` | Placed between notebook names in full-path mode. |
 | **Show the notebook icon** | On | The notebook glyph before the name. |

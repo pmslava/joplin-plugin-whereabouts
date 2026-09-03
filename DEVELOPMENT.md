@@ -57,7 +57,7 @@ before changing them:
    appends the content script to the *main* window even when the editor is in a secondary window, so
    the global `document` is the wrong one there.
 3. **Only three insertion slots are used** (direct child of `.note-title-wrapper`, direct child of
-   `.editor-toolbar`, or the immediate next sibling of `.note-title-wrapper`), the insert is
+   `#CodeMirrorToolbar`, or the immediate next sibling of `.note-title-wrapper`), the insert is
    idempotent, and a `MutationObserver` repairs it. React re-renders the title bar on every note
    switch, and mounts/unmounts its own "In: \<Notebook\>" pill — our neighbour in the below-title
    slot — as the view changes; without the repair the chip vanishes. The observer watches the title
@@ -127,7 +127,7 @@ Do not bypass the lock.
 | `e2e/actions.spec.ts` | defaults | single click filters without stealing focus; double click reveals (the note list takes focus and marks the row); right click opens the folder picker and cancelling moves nothing |
 | `e2e/live-refresh.spec.ts` | defaults | the chip follows a note MOVED to another notebook (event-driven), and picks up a notebook RENAME (which fires no plugin event, so only the poll catches it) |
 | `e2e/path-mode.spec.ts` | `pathMode: 'full'` | `Alpha / Beta` for a nested notebook |
-| `e2e/placement.spec.ts` | `placement: 'inline-right'`, then `'toolbar-first'` | both non-default containers, plus computed padding/cursor/height parity with a sibling toolbar button |
+| `e2e/placement.spec.ts` | each of the four placements, `pathMode: 'full'` | where each placement lands; below-title's left-edge alignment and symmetric gaps; the compact two-line layout; inline-right's vertical centring; editor-toolbar's parity with a sibling button and a non-collapsed label. Also writes `docs/images/placement-*.png`. |
 | `e2e/native-pill.spec.ts` | `hideNativePill: false` | the native pill stays visible |
 
 The secondary-window spec is the one to keep working: it is what proves each editor reports its own
@@ -160,3 +160,55 @@ xvfb-run -a --server-args="-screen 0 1920x1080x24" npx playwright test e2e/chip.
 
 Failures leave a trace and screenshot under `test-results/`; `playwright-report/` has the HTML
 report.
+
+
+## Placements
+
+Four values, all landing in one of the three reconciliation-safe slots:
+
+| Setting value | Slot | Notes |
+| --- | --- | --- |
+| `below-title` (default) | immediate next sibling of `.note-title-wrapper` | The slot Joplin's own "In: \<Notebook\>" pill uses. |
+| `below-title-compact` | direct child of `.note-title-wrapper`, after the title input | Same slot as `inline-right`; the two-line effect is **CSS only**. |
+| `inline-right` | direct child of `.note-title-wrapper`, after the title input | |
+| `editor-toolbar` | direct child of `#CodeMirrorToolbar`, before its first `.group` | Wears core's `toolbar-button -has-title` classes. |
+
+Three things here are load-bearing and easy to break:
+
+1. **The compact layout never moves a React node.** Re-parenting `.note-title-info-group` under the
+   chip is the obvious implementation and it crashes the editor the next time React reconciles the
+   title row. Instead the content script adds a marker class to `.note-title-wrapper` (React sets
+   that element's `className` from a constant, so it never diffs it away) and the stylesheet does
+   the rest with `flex-wrap`.
+2. **One `!important`, in exactly one rule.** Joplin sets `flex: 1` as a React *inline* style on
+   `input.title-input`, which beats any stylesheet rule; the compact layout needs the basis to be
+   100% so the title claims a line of its own. That is the only declaration in the file allowed to
+   use it — everything else wins on ordering or specificity.
+3. **The chip's row measures its own spacing at runtime** (`alignChipRow`). Two separate
+   corrections, both driven by `getBoundingClientRect`:
+   - *Left edge.* The stylesheet asks for Joplin's editor padding-left, but that CSS variable only
+     exists while the theme object carries `editorPaddingLeft`, and a custom theme or user
+     stylesheet can leave it disagreeing with the value core actually used for the editor column.
+     So the chip also measures `#CodeMirrorToolbar` and nudges its padding to match.
+   - *Vertical.* The acceptance criterion is that the empty space **above** the chip
+     (`chipHost.top − titleInput.bottom`) equals the space **below** it
+     (`#CodeMirrorToolbar.top − chipRow.bottom`), and that both equal the gap a single-line layout
+     leaves between the title and the toolbar. Symmetric padding on the chip cannot achieve this —
+     padding is inside the host box, so it never touches either gap. The spacing that does is
+     outside the box, and how much is already there depends on the title row's `align-items:
+     center` and on the editor container, i.e. on the theme. So it is measured: with `A0`/`B0` the
+     natural gaps, putting `B0` above and `A0` below makes both sides `A0 + B0` — exactly the space
+     that existed before the chip row was inserted. No stored state, converges in one pass, never
+     negative. `below-title` spends it on the host's margins; the compact layout uses the wrapper's
+     `row-gap` and `padding-bottom`, because its host is a flex item on a centred line where a
+     margin does not translate 1:1 into position.
+
+   Do not delete either because "the CSS already does it" — the CSS is right on the shipped themes
+   and was wrong on a real user profile.
+
+### Screenshots
+
+`docs/images/placement-*.png` are committed, referenced by both the manifest and the README, and
+**regenerated by `e2e/placement.spec.ts` on every run** — so they always show the current build.
+They are also validated at build time: `webpack.config.js` refuses to build if a file named in the
+manifest's `screenshots` is missing or over 1MB, so the files must exist before `npm run dist`.
