@@ -46,7 +46,7 @@ folder, then quit and relaunch after each `npm run dist`.
 | `src/common.ts` | Types and constants shared by both bundles. Must not import `joplin` or CodeMirror. |
 | `src/whereabouts.css` | Chip styling (all `--joplin-*` theme variables) plus the native-pill hide rule. |
 
-Three things in the source look odd and are deliberate. Each is commented in place; read the comment
+Four things in the source look odd and are deliberate. Each is commented in place; read the comment
 before changing them:
 
 1. **The chip is delivered by a CodeMirror content script even though it never touches the note
@@ -123,13 +123,33 @@ Do not bypass the lock.
 | Spec | Launches Joplin with | Covers |
 | --- | --- | --- |
 | `e2e/chip.spec.ts` | defaults | chip renders in the native pill slot; updates on note switch; survives viewer-only layout; hides the native pill; left click filters and keeps the note |
+| `e2e/secondary-window.spec.ts` | defaults | two editor windows on notes in different notebooks: each names its OWN notebook in both focus states, and the secondary chip is inert |
+| `e2e/actions.spec.ts` | defaults | single click filters without stealing focus; double click reveals (the note list takes focus and marks the row); right click opens the folder picker and cancelling moves nothing |
+| `e2e/live-refresh.spec.ts` | defaults | the chip follows a note MOVED to another notebook (event-driven), and picks up a notebook RENAME (which fires no plugin event, so only the poll catches it) |
 | `e2e/path-mode.spec.ts` | `pathMode: 'full'` | `Alpha / Beta` for a nested notebook |
-| `e2e/placement.spec.ts` | `placement: 'inline-right'`, then `'toolbar-first'` | both non-default containers |
+| `e2e/placement.spec.ts` | `placement: 'inline-right'`, then `'toolbar-first'` | both non-default containers, plus computed padding/cursor/height parity with a sibling toolbar button |
 | `e2e/native-pill.spec.ts` | `hideNativePill: false` | the native pill stays visible |
 
-Each `test.describe` that needs a different startup configuration launches its own Joplin, because
-plugin settings are read from the profile at startup and there is no reliable GUI route to change
-them mid-run.
+The secondary-window spec is the one to keep working: it is what proves each editor reports its own
+note rather than the focused window's (see point 4 above). The click specs assert command EFFECTS,
+never timers — the 250 ms single/double debounce is proven by whether the note list takes focus and
+marks the row (`aria-activedescendant`), because both gestures call `openNote` and only reveal calls
+`focusElementNoteList`.
+
+Each `test.describe` that needs a different configuration launches its own Joplin and seeds the
+settings into its profile. That is not merely a convenience — **a Whereabouts setting cannot be
+changed at runtime from this harness at all**:
+
+- Joplin's Options screen is opened by an Electron *menu item* (`Tools → Options`). Its `Ctrl+,`
+  accelerator is handled in the browser process, so a Playwright-synthesised key never reaches it;
+  verified empirically, and there is no in-DOM menu bar to click either.
+- The Data API has no settings route (ping / notes / folders / tags / resources / master_keys /
+  search / services / auth / events / revisions / mcp).
+
+So the settings themselves are asserted from seeded launches, and the live-update PIPELINE they
+travel down — `settings.onChange` → refresh ping → the editor re-asks → the chip re-renders — is
+asserted end to end by `live-refresh.spec.ts`, which drives the same pipeline with data changes.
+If a route into Options ever appears, that spec is where the settings half belongs.
 
 Run one spec while iterating:
 

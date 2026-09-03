@@ -28,7 +28,9 @@ First working version. Not yet published to the Joplin plugin repository.
   filters its panel to the notebook and a double click reveals the note there. Both are
   fire-and-forget, so Whereabouts behaves identically without Cockpit installed.
 - All settings apply live — no restart.
-- End-to-end suite driving the real Joplin 3.7.14 desktop app over CDP.
+- End-to-end suite driving the real Joplin 3.7.14 desktop app over CDP: rendering and placement,
+  the three click actions, two editor windows each naming their own notebook, and the chip keeping
+  up with a note being moved and a notebook being renamed while the app runs.
 
 ### Notes and limitations
 
@@ -45,6 +47,11 @@ First working version. Not yet published to the Joplin plugin repository.
   for a mounted editor extension and no API to drop a loaded chrome stylesheet.
 - `revealInNotebook` (core PR laurent22/joplin#16354) is feature-detected: once it ships, double
   click uses it; until then it falls back to `openNote` + `focusElementNoteList`.
+- A notebook RENAME raises no plugin event, so each editor re-asks for its state on a timer. The
+  cost is held down by memoised notebook paths, skipping the check while the window is hidden, and
+  backing the interval off to 5s once the answer stops changing.
+- Failed actions are reported to the console with a `[whereabouts]` prefix rather than silently
+  doing nothing.
 
 [Unreleased]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/pmslava/joplin-plugin-whereabouts/releases/tag/v0.1.0

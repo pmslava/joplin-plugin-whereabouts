@@ -252,8 +252,16 @@ class TitleChip {
 				slot.parent.insertBefore(this.host, slot.parent.firstChild);
 			}
 		}
+		// Watch the chain from the chip's own slot up to the title bar's parent. Each link is a node
+		// React could replace (info group, toolbar, wrapper) and take our chip down with, and none of
+		// them sees editor traffic — so this stays cheap while covering every placement.
 		const wrapper = this.titleWrapper();
-		this.observe([wrapper?.parentElement ?? null, slot.parent]);
+		this.observe([
+			wrapper?.parentElement ?? null,
+			wrapper,
+			slot.parent.parentElement,
+			slot.parent,
+		]);
 		return true;
 	}
 
@@ -279,7 +287,11 @@ class TitleChip {
 		const MO = (this.ownerWin as unknown as { MutationObserver?: typeof MutationObserver }).MutationObserver;
 		if (typeof MO !== 'function') return;
 
-		const wanted = targets.filter((t): t is Node => !!t);
+		// Dedupe: the slot parent IS the wrapper for inline-right, and its parent for below-title.
+		const wanted: Node[] = [];
+		for (const target of targets) {
+			if (target && wanted.indexOf(target) < 0) wanted.push(target);
+		}
 		// Re-observing the same nodes on every sync would be pointless churn; skip when unchanged.
 		if (
 			this.observer &&

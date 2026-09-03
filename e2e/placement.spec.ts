@@ -77,5 +77,32 @@ test.describe('Whereabouts chip — toolbar-first placement', () => {
 			.getAttribute('class');
 		expect(classes).toContain('toolbar-button');
 		expect(classes).toContain('-has-title');
+
+		// Wearing the classes is not enough. This plugin's stylesheet is linked AFTER core's, so any
+		// property the .whereabouts-chip pill rules declare wins at equal specificity and would leave
+		// the chip visibly out of step with the buttons beside it. Compare the COMPUTED values against
+		// a real sibling toolbar button.
+		const geometry = await win.evaluate(() => {
+			const chip = document.querySelector('[data-whereabouts-chip] .whereabouts-chip') as HTMLElement | null;
+			const toolbar = document.querySelector('.note-title-info-group .editor-toolbar');
+			const sibling = toolbar?.querySelector('.group button.toolbar-button') as HTMLElement | null;
+			if (!chip || !sibling) return null;
+			const read = (el: HTMLElement) => {
+				const cs = getComputedStyle(el);
+				return {
+					paddingLeft: cs.paddingLeft,
+					paddingRight: cs.paddingRight,
+					paddingTop: cs.paddingTop,
+					paddingBottom: cs.paddingBottom,
+					cursor: cs.cursor,
+					display: cs.display,
+					height: Math.round(el.getBoundingClientRect().height),
+				};
+			};
+			return { chip: read(chip), sibling: read(sibling) };
+		});
+
+		expect(geometry, 'both the chip and a sibling toolbar button should be present').not.toBeNull();
+		expect(geometry?.chip).toEqual(geometry?.sibling);
 	});
 });

@@ -45,6 +45,10 @@ export class DataApi {
 		return this.request<T>('POST', path, body);
 	}
 
+	public async put<T>(path: string, body: unknown): Promise<T> {
+		return this.request<T>('PUT', path, body);
+	}
+
 	private request<T>(method: string, path: string, body?: unknown): Promise<T> {
 		const separator = path.includes('?') ? '&' : '?';
 		const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -88,6 +92,14 @@ export class DataApi {
 
 	public async createNote(title: string, parentId: string, body = ''): Promise<Note> {
 		return this.post<Note>('/notes', { title, parent_id: parentId, body });
+	}
+
+	public async renameFolder(id: string, title: string): Promise<Folder> {
+		return this.put<Folder>(`/folders/${id}`, { title });
+	}
+
+	public async moveNote(id: string, parentId: string): Promise<Note> {
+		return this.put<Note>(`/notes/${id}`, { parent_id: parentId });
 	}
 }
 
