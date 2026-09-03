@@ -2,7 +2,11 @@
   "name": "joplin-plugin-whereabouts",
   "version": "0.2.0",
   "description": "Whereabouts: always shows the current notebook next to the note title, with click to filter, double-click to reveal, right-click to move.",
+  "author": "pmslava",
   "homepage": "https://github.com/pmslava/joplin-plugin-whereabouts",
+  "bugs": {
+    "url": "https://github.com/pmslava/joplin-plugin-whereabouts/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pmslava/joplin-plugin-whereabouts.git"
