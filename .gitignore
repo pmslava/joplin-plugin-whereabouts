@@ -1,0 +1,17 @@
+node_modules/
+dist/
+publish/
+
+# Real-app E2E: downloaded Joplin build, throwaway profiles and Playwright output
+.e2e-cache/
+e2e/.profiles/
+test-results/
+playwright-report/
+.vscode/
+
+# Local E2E run logs
+e2e-run*.log
+
+# Temporary P1 reproduction harness (never commit — reads private profile)
+e2e/_repro*.spec.ts
+e2e/_fullfidelity*.ts
