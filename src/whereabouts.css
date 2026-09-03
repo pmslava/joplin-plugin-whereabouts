@@ -120,11 +120,26 @@ html.whereabouts-hide-native
 	color: var(--joplin-color);
 	font-family: var(--joplin-font-family);
 	/*
-	 * NOT --joplin-font-size-small: despite being referenced in a couple of core stylesheets, that
-	 * variable is never emitted by themeToCss in 3.7.14 (verified against the shipped bundle), so it
-	 * resolves to nothing and the declaration is dropped. Derive from the one that does exist.
+	 * The chip takes the text size of whatever it is sitting in, which is what makes it read as part
+	 * of the title area rather than as a footnote to it.
+	 *
+	 * There is history here. 0.1.0 asked for --joplin-font-size-small, which themeToCss never emits
+	 * in 3.7.14 (verified against the shipped bundle); the declaration was therefore dropped and the
+	 * chip silently inherited — the right answer, by accident. 0.2.0 "fixed" the dead variable with
+	 * calc(var(--joplin-font-size) * 0.9) and made the chip smaller than everything around it.
+	 *
+	 * Measured in the running app on the default theme (--joplin-font-size: 12px):
+	 *   inherited (this rule) .......... 13px   — .note-title-wrapper and the editor column both
+	 *   0.2.0's calc ................... 10.8px
+	 *   date label (.updated-time-label)  12px  — core sets it from theme.textStyle
+	 *   note/editor toolbar buttons .... 14.4px
+	 * So inheriting puts the chip between the date label and the toolbar buttons, where it belongs;
+	 * 0.9 * base put it below all of them.
+	 *
+	 * The editor-toolbar placement overrides this further down and must keep doing so: there the
+	 * chip IS a core toolbar button and core sizes it.
 	 */
-	font-size: calc(var(--joplin-font-size) * 0.9);
+	font-size: inherit;
 	line-height: 1.4;
 	cursor: pointer;
 	white-space: nowrap;

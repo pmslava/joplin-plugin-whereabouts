@@ -61,6 +61,14 @@ Cockpit's reveal turns out to need from this side.
   All the existing guards still apply everywhere: conflict notes, notes in the trash and notes in a
   read-only share stay fully inert.
 
+### Fixed
+
+- **The chip's text is back to the size it was in 0.1.0.** It inherits the title area's text size
+  again (13px on the default theme, against the date label's 12px and the toolbar buttons' 14.4px)
+  instead of the `0.9 × base` — 10.8px — that 0.2.0 introduced while replacing a CSS variable that
+  turns out not to exist. The editor-toolbar placement is unaffected: there the chip is a core
+  toolbar button and core sizes it.
+
 
 ## [0.2.1] — 2026-09-03
 
