@@ -18,6 +18,7 @@ import {
 	folderPickerOpen,
 	openDialogClasses,
 	openNoteInNewWindow,
+	revealedNoteListId,
 	selectNoteByTitle,
 	selectNotebookByTitle,
 	selectedSidebarFolderId,
@@ -95,27 +96,79 @@ test.describe('Whereabouts — secondary editor window', () => {
 		expect(await chipNoteId(win)).toBe(seed.noteInGamma.id);
 	});
 
-	test('the secondary window\'s chip offers move only, and a left click still changes nothing', async () => {
+	/**
+	 * Put the two windows back into the starting arrangement: the MAIN window on "Note in Gamma",
+	 * the secondary one on "Note in Beta", and the secondary window brought to the front.
+	 *
+	 * Both click tests move the main window to Beta, so each has to reset it first.
+	 *
+	 * WHAT THE TWO CLICK TESTS BELOW DO AND DO NOT PROVE. They prove the whole action path from a
+	 * secondary window: the chip is live there (it was inert before 0.3.0), the plugin's hand-off
+	 * runs and confirms — an unconfirmed hand-off aborts the action, so a failure here would show as
+	 * nothing moving — and the effect lands in the MAIN window's sidebar, editor and note list while
+	 * the secondary window keeps its own note.
+	 *
+	 * They cannot prove the FOCUS TRANSFER itself, and no test in this harness can. The suite runs
+	 * under a bare Xvfb server with no window manager, where Joplin's root redux state stays the
+	 * main window's throughout: `bringToFront()` (CDP) and an in-renderer `window.focus()` were both
+	 * measured and neither makes Electron fire the focus event that dispatches `WINDOW_FOCUS`, and
+	 * every document reports `hasFocus() === true` at the same time. So the state these clicks
+	 * navigate is the main window's either way. That is precisely why the plugin confirms the
+	 * hand-off by observation rather than assuming it (see `handOverToMainWindow` in src/index.ts):
+	 * the check is the same in both environments, it is simply already satisfied in this one.
+	 */
+	async function armFromSecondaryWindow(): Promise<void> {
 		const { win } = joplin;
 		await win.bringToFront();
 		await win.waitForTimeout(SETTLE);
+		await selectNotebookByTitle(win, 'Gamma');
+		await selectNoteByTitle(win, NOTE_IN_GAMMA_TITLE);
+		await expect(win.locator(CHIP_LABEL)).toHaveText('Gamma', { timeout: 30_000 });
 
-		const folderBefore = await selectedSidebarFolderId(win);
-		const noteBefore = await chipNoteId(win);
+		await secondary.bringToFront();
+		await secondary.waitForTimeout(SETTLE);
+		await expect(secondary.locator(CHIP_LABEL)).toHaveText('Beta', { timeout: 30_000 });
+	}
 
-		// Right-click works here, left-click does not — so the chip is marked move-only rather than
-		// fully inert, and it must NOT be dimmed as an unusable control.
+	test('a left click hands focus to the MAIN window and selects the notebook and note there', async () => {
+		const { win } = joplin;
+		await armFromSecondaryWindow();
+
+		// The chip is a live control in a secondary window now — no "move only" affordance left.
 		const host = secondary.locator('[data-whereabouts-chip]');
-		await expect(host).toHaveClass(/-move-only/);
+		await expect(host).not.toHaveClass(/-move-only/);
 		await expect(host).not.toHaveClass(/-inert/);
 
-		// The navigation half stays disabled: a left click must not reach into the main window's
-		// sidebar or note selection.
 		await secondary.locator(CHIP_BUTTON).first().click();
-		await secondary.waitForTimeout(SETTLE * 2);
 
-		expect(await selectedSidebarFolderId(win)).toBe(folderBefore);
-		expect(await chipNoteId(win)).toBe(noteBefore);
+		// The action lands in the MAIN window: its sidebar selects Beta and it opens the note the
+		// secondary window was showing. Before 0.3.0 the click was inert and nothing here moved.
+		await expect.poll(() => selectedSidebarFolderId(win), { timeout: 30_000 }).toBe(seed.beta.id);
+		await expect.poll(() => chipNoteId(win), { timeout: 30_000 }).toBe(seed.noteInBeta.id);
+		await expect(win.locator('input.title-input')).toHaveValue(NOTE_IN_BETA_TITLE, { timeout: 30_000 });
+
+		// ...and the secondary window is left exactly where it was, still on its own note.
+		await expect(secondary.locator('input.title-input')).toHaveValue(NOTE_IN_BETA_TITLE);
+		expect(await chipNoteId(secondary)).toBe(seed.noteInBeta.id);
+		await expect(secondary.locator(CHIP_LABEL)).toHaveText('Beta');
+	});
+
+	test('a double click also reveals the note in the MAIN window\'s note list', async () => {
+		const { win } = joplin;
+		await armFromSecondaryWindow();
+
+		await secondary.locator(CHIP_BUTTON).first().dblclick();
+
+		// Same navigation as the single click...
+		await expect.poll(() => selectedSidebarFolderId(win), { timeout: 30_000 }).toBe(seed.beta.id);
+		await expect.poll(() => chipNoteId(win), { timeout: 30_000 }).toBe(seed.noteInBeta.id);
+		// ...plus the reveal half, which is what separates the two gestures: core's `focusNote`
+		// focuses the LIST CONTAINER and marks the row through aria-activedescendant. Same check as
+		// actions.spec.ts, but read from the main window while the click happened in the other one.
+		await expect.poll(() => revealedNoteListId(win), { timeout: 30_000 }).toBe(seed.noteInBeta.id);
+
+		// The secondary window is still on its own note, unrevealed and unmoved.
+		await expect(secondary.locator('input.title-input')).toHaveValue(NOTE_IN_BETA_TITLE);
 		expect(await chipNoteId(secondary)).toBe(seed.noteInBeta.id);
 	});
 
@@ -127,8 +180,9 @@ test.describe('Whereabouts — secondary editor window', () => {
 		await secondary.locator(CHIP_BUTTON).first().click({ button: 'right' });
 
 		// The picker must belong to the window the user right-clicked in. Joplin's secondary editor
-		// window mounts its own WindowCommandsAndDialogs, so the dialog is in THAT document — this is
-		// the whole reason move is safe here while navigation is not.
+		// window mounts its own WindowCommandsAndDialogs, so the dialog is in THAT document — which
+		// is why move is the one action that stays in this window instead of being handed to the
+		// main one: you are filing the note you are looking at.
 		await expect
 			.poll(
 				async () =>
