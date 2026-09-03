@@ -12,6 +12,6 @@ playwright-report/
 # Local E2E run logs
 e2e-run*.log
 
-# Temporary P1 reproduction harness (never commit — reads private profile)
-e2e/_repro*.spec.ts
-e2e/_fullfidelity*.ts
+# Scratch specs kept out of the suite (never commit — they may point at a real profile)
+e2e/_*.spec.ts
+e2e/_*.ts

@@ -262,10 +262,21 @@ class TitleChip {
 
 		// Only rewrite the DOM when something actually changed: this runs from a MutationObserver, and
 		// writing unconditionally would keep waking itself up.
-		const signature = [text, placement, String(settings.showIcon), String(this.canAct())].join(' ');
+		const signature = [
+			text,
+			placement,
+			String(settings.showIcon),
+			String(this.canAct()),
+			this.state.noteId,
+			this.state.folderId,
+		].join('|');
 		if (signature !== this.renderedSignature) {
 			this.renderedSignature = signature;
 			this.host.dataset.placement = placement;
+			// Not used for rendering: these make the chip self-describing for debugging and let the
+			// E2E suite assert WHICH note/notebook the chip is currently speaking for.
+			this.host.dataset.noteId = this.state.noteId;
+			this.host.dataset.folderId = this.state.folderId;
 
 			// In the toolbar the chip must BE a native toolbar button, so it inherits Joplin's own
 			// sizing, hover and theme colours instead of approximating them.
