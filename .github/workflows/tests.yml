@@ -1,0 +1,161 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Fast gate: type-check and build the plugin, and prove the version is pinned everywhere. This is
+  # the job the publish workflow gates on. Whereabouts has no unit-level harness — every behavioural
+  # claim it makes is about the real Joplin DOM, so it is all asserted by the real-app E2E suite
+  # below rather than by mocks that could agree with a wrong assumption.
+  build:
+    name: Type-check & build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # `npm ci` runs the `prepare` script, which itself runs `npm run dist` (and webpack's
+      # validateScreenshots over the manifest's screenshots array). Install with scripts, then
+      # type-check and rebuild explicitly so a build/type break fails here loudly and fast.
+      - run: npm ci
+      # Version-consistency harness: pin the "quadruple" the publishing playbook requires. The bump
+      # helper (`npm run updateVersion`) only touches package.json + src/manifest.json, so the
+      # package-lock.json version fields drift silently unless the lockfile is refreshed. Fail the
+      # build here — before publishing can ever gate on it — unless all four agree.
+      - name: Check the version is pinned across all four places
+        run: |
+          node -e '
+            const pkg = require("./package.json").version;
+            const manifest = require("./src/manifest.json").version;
+            const lock = require("./package-lock.json");
+            const places = {
+              "package.json": pkg,
+              "src/manifest.json": manifest,
+              "package-lock.json .version": lock.version,
+              "package-lock.json .packages[\"\"].version": lock.packages[""].version,
+            };
+            const values = Object.values(places);
+            if (new Set(values).size !== 1) {
+              console.error("::error::Version mismatch across the four version places: " + JSON.stringify(places));
+              process.exit(1);
+            }
+            console.log("Version is consistent at " + pkg + " across all four version places.");
+          '
+      # webpack's validateScreenshots refuses to build if a file named in the manifest's `screenshots`
+      # array is missing or larger than 1024 KB — so a deleted or bloated PNG breaks `npm run dist`
+      # and therefore the publish. Check it explicitly first, so the failure names the file and its
+      # size instead of surfacing as an ENOENT from inside the webpack config.
+      - name: Check the manifest screenshots exist and are within the size cap
+        run: |
+          node -e '
+            const fs = require("fs");
+            const MAX_KB = 1024;
+            const shots = require("./src/manifest.json").screenshots || [];
+            if (!shots.length) {
+              console.log("No screenshots declared in src/manifest.json — nothing to check.");
+              process.exit(0);
+            }
+            let failed = false;
+            for (const shot of shots) {
+              if (/^https?:\/\//.test(shot.src)) continue;
+              if (!fs.existsSync(shot.src)) {
+                console.error("::error::Missing screenshot referenced by src/manifest.json: " + shot.src);
+                failed = true;
+                continue;
+              }
+              const kb = fs.statSync(shot.src).size / 1024;
+              if (kb > MAX_KB) {
+                console.error("::error::" + shot.src + " is " + kb.toFixed(0) + " KB, over the " + MAX_KB + " KB cap");
+                failed = true;
+                continue;
+              }
+              console.log(shot.src + " — " + kb.toFixed(0) + " KB");
+            }
+            if (failed) process.exit(1);
+            console.log("All " + shots.length + " screenshots present and within the " + MAX_KB + " KB cap.");
+          '
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Build the plugin
+        run: npm run dist
+      - name: Check the build produced the .jpl
+        run: |
+          PLUGIN_ID="$(node -p "require('./src/manifest.json').id")"
+          for FILE in "publish/$PLUGIN_ID.jpl" "publish/$PLUGIN_ID.json"; do
+            if [ ! -s "$FILE" ]; then
+              echo "::error::Expected $FILE to exist and be non-empty after npm run dist"
+              exit 1
+            fi
+          done
+          echo "Built publish/$PLUGIN_ID.jpl"
+
+  # Real-app E2E: launches the actual Joplin desktop (Electron) under Xvfb with the plugin loaded and
+  # drives the genuine GUI with Playwright. Deliberately kept out of the publish gate (see publish.yml):
+  # it downloads a ~200 MB Joplin build and takes minutes, so it runs on every push and PR here instead.
+  e2e:
+    name: Real-app E2E (Playwright + Joplin desktop)
+    needs: build
+    runs-on: ubuntu-24.04
+    # Playwright's own globalTimeout (playwright.config.ts) is 35 min: a stuck suite stops itself and
+    # still uploads its report/traces, rather than being hard-cancelled here (a cancel skips the
+    # upload). Keep this job cap comfortably above that so it only ever fires on a true runner hang.
+    timeout-minutes: 45
+    env:
+      # Must be >= the plugin's manifest app_min_version (3.7). Pinned to 3.7.14 — the build the
+      # plugin was developed and verified against, and the one on the maintainer's own desktop.
+      # Whereabouts injects into Joplin's PRIVATE note-title DOM, so the suite is only meaningful
+      # against a known Joplin version. Keep in sync with scripts/setup-e2e.sh, and used as the
+      # AppImage cache key below.
+      JOPLIN_E2E_VERSION: 3.7.14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Electron is Chromium under the hood, so Playwright's chromium host deps cover Joplin too.
+      # Also install Xvfb for the virtual display the GUI requires.
+      - name: Install Electron/Chromium system dependencies + Xvfb
+        run: |
+          sudo npx playwright install-deps chromium
+          sudo apt-get install -y xvfb
+
+      # Cache the downloaded Joplin AppImage so reruns skip the download. setup-e2e.sh re-extracts it
+      # (fast) when the squashfs-root is absent, so only the AppImage itself needs caching.
+      #
+      # On a laptop you would instead point setup-e2e.sh at an AppImage you already have:
+      #   JOPLIN_E2E_APPIMAGE=~/.joplin/Joplin.AppImage npm run setup:e2e
+      # CI has no such copy, so it downloads JOPLIN_E2E_VERSION from the Joplin releases page.
+      - name: Cache Joplin AppImage
+        uses: actions/cache@v4
+        with:
+          path: .e2e-cache/Joplin.AppImage
+          key: joplin-appimage-${{ env.JOPLIN_E2E_VERSION }}
+
+      # Builds the plugin (npm run dist), downloads + extracts Joplin (npm run setup:e2e), then runs the
+      # Playwright suite under a virtual display (xvfb-run). A single unsharded run is fine in CI.
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+      - name: Upload Playwright report & traces
+        # Always upload, including on failure or timeout — the traces are the whole point of the
+        # artifact and are needed precisely when something went wrong.
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
