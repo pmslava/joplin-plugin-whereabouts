@@ -10,13 +10,15 @@ published to **npm** as a package that carries the built `.jpl`, and the Joplin 
 harvests npm for packages keyed with the `joplin-plugin` keyword. There is no separate submission
 step.
 
-After the one-time bootstrap below, the whole release is driven by a GitHub Release: publishing the
-release fires `publish.yml`, which publishes to npm via **trusted publishing (OIDC)**.
+The one-time bootstrap is **done** (see [First release
+(bootstrap)](#first-release-bootstrap--done-once-for-v020)), so the whole release is now driven by a
+GitHub Release: publishing the release fires `publish.yml`, which publishes to npm via **trusted
+publishing (OIDC)**.
 
-> **v0.2.0 is the first release, so it still needs the bootstrap.** Read
-> [First release (bootstrap)](#first-release-bootstrap--to-do-for-v020) before doing anything else:
-> it is the one sanctioned `npm publish` by hand, and it has a YubiKey gotcha that will waste your
-> time if you meet it cold.
+> **Before the next release, read [the "Allow npm publish"
+> checkbox](#the-allow-npm-publish-checkbox-must-stay-checked).** npm added staged publishing to the
+> trusted-publisher form in 2026; if that box is ever cleared, every release silently starts
+> requiring a manual promotion step.
 
 ## The short version
 
@@ -153,52 +155,76 @@ npm view joplin-plugin-whereabouts version
 Trusted publishing means there is **no `NPM_TOKEN` secret**. npm is told to trust this repository and
 this workflow, and the job exchanges a short-lived GitHub OIDC token for publish rights.
 
-### First release (bootstrap) — TO DO for v0.2.0
+### First release (bootstrap) — done once, for v0.2.0
 
-**This has not happened yet.** It is the one sanctioned exception to the never-`npm publish`-by-hand
-rule, and it exists for a concrete npm limitation, not for convenience:
+**The very first publish of this package was done by hand,** on **2026-09-03 at 09:51 UTC**. That was
+the **one sanctioned exception** to the
+[never-`npm publish`-by-hand rule](#the-publish-is-automatic-never-npm-publish-by-hand), and it
+existed for a concrete npm limitation, not for convenience:
 
 > A trusted publisher can only be configured on a package that **already exists** on npm. npm has
 > **no pending / pre-registration** — there is no way to declare a trusted publisher for a name
-> before that name has been published.
+> before that name has been published. (See
+> [docs.npmjs.com/trusted-publishers](https://docs.npmjs.com/trusted-publishers).)
 
 That is a chicken-and-egg at birth: the release workflow can only publish via OIDC once the trusted
 publisher is configured, but the trusted publisher can only be configured once the package exists.
-The bootstrap breaks the loop by publishing the first version manually, configuring trust on the
-now-existing package, then removing the local token so the repository returns to its steady
+The bootstrap broke the loop by publishing the first version manually, configuring trust on the
+now-existing package, then removing the local token so the repository returned to its steady
 **no-tokens-anywhere** state.
 
-Do this once, in order, for **v0.2.0**:
+**This is a record, not a step to repeat.** What was done, in order, for `v0.2.0`:
 
-1. Prove the gates in the normal order — local fast gate → local E2E → push `main` → `tests.yml`
-   green on that exact SHA (see [The gates, in order](#the-gates-in-order)).
-2. **`npm login`** — interactive, with 2FA. This writes a **temporary local token into `~/.npmrc`**,
-   the only moment a token exists anywhere.
-3. `npm run dist` — build the `.jpl` from the commit proved green.
-4. **`npm publish`** — the manual publish that creates the package on npm for the first and only
-   time.
+1. Proved the gates in the normal order — local fast gate → local E2E → pushed `main` → `tests.yml`
+   green on that exact SHA (`92cc33a`), both the fast gate **and** the real-app E2E job.
+2. `npm login` — interactive, authenticating with the **YubiKey (WebAuthn)**. This wrote a
+   **temporary local token into `~/.npmrc`**, the only moment a token existed anywhere.
+3. `npm run dist` — built the `.jpl` from the commit proved green.
+4. `npm publish` — the manual publish that created the package on npm for the first and only time.
 
    > **Do not pass `--otp`.** The npm account is protected with a **YubiKey (WebAuthn)**, and
    > WebAuthn is not a TOTP code — there is no six-digit number to supply. `npm publish` prints an
    > **authentication URL** to open in a browser, where you touch the key to approve; the CLI then
-   > continues on its own. Passing `--otp` with anything makes npm try the TOTP path and fail. (Learned
-   > the hard way publishing `joplin-plugin-copy-note-id`.)
+   > continues on its own. Passing `--otp` with anything makes npm try the TOTP path and fail.
+   > (Learned the hard way publishing `joplin-plugin-copy-note-id`.)
 
-5. `npm view joplin-plugin-whereabouts version` — confirm it landed.
-6. Configure the **trusted publisher** on the now-existing package (npmjs.com → the
+5. `npm view joplin-plugin-whereabouts version` — confirmed `0.2.0` had landed.
+6. Configured the **trusted publisher** on the now-existing package (npmjs.com → the
    `joplin-plugin-whereabouts` package → **Settings → Trusted publisher**, with
    [the values below](#the-trusted-publisher-configuration)) — only possible once step 4 made it
    exist.
-7. **`npm logout`** — invalidate and remove the temporary token, restoring the
+7. `npm logout` — invalidated and removed the temporary token, restoring the
    **no-tokens-anywhere** state.
-8. Cut the GitHub Release the normal way. `publish.yml` fires for a version **already on npm**, and
-   its **idempotency guard** detects that and skips the publish step, finishing the job GREEN
-   (`0.2.0 already on npm — skipping publish (bootstrap or re-run)`). That guard stays in place, so
-   re-running the workflow on an already-published version is safe.
+8. Cut the GitHub Release `v0.2.0` with the built `.jpl` attached. `publish.yml` fired for a version
+   **already on npm**, and its **idempotency guard** detected that and skipped the publish step,
+   finishing the job GREEN (`0.2.0 already on npm — skipping publish (bootstrap or re-run)`). That
+   guard is still in place, so re-running the workflow on an already-published version is safe.
 
-**Every release after this one is fully automatic.** Once the trusted publisher is configured and the
-token is gone, `publish.yml` publishes via OIDC exactly as
-[The publish is automatic](#the-publish-is-automatic-never-npm-publish-by-hand) describes.
+   > In that run, the **"Show the OIDC claims npm will present"** step reported **`package not
+   > found`** from the token exchange. That was expected and harmless: the exchange ran at a moment
+   > when the trusted publisher was not yet in effect for the package, and nothing depended on it —
+   > the guard had already skipped the publish. It is **not** evidence that the configuration is
+   > wrong. To actually confirm the configuration, use a dry run (below).
+
+**Every release from here is fully automatic** — the trusted publisher is configured, the token is
+gone, and `publish.yml` publishes via OIDC exactly as
+[The publish is automatic](#the-publish-is-automatic-never-npm-publish-by-hand) describes. The
+bootstrap was the only time `npm publish` was ever run by hand.
+
+### Verifying the trusted publisher without releasing anything
+
+Run **`publish.yml` manually** (Actions → *Publish to npm* → **Run workflow**). This is safe: the
+version in `package.json` is already on npm, so the **idempotency guard skips the publish step** and
+nothing is written to the registry. What it does prove is the OIDC path — the **"Show the OIDC claims
+npm will present"** step should print:
+
+```
+token exchange for joplin-plugin-whereabouts: HTTP 200
+registry says:  (exchange succeeded)
+```
+
+If it instead says `package not found`, or the claims do not match the trusted publisher, the
+configuration is wrong — fix it **before** cutting a release rather than discovering it mid-release.
 
 ### The trusted-publisher configuration
 
@@ -211,7 +237,25 @@ On **npmjs.com → the `joplin-plugin-whereabouts` package → Settings → Trus
 | Repository | `joplin-plugin-whereabouts` |
 | Workflow | `publish.yml` |
 | Environment | `npm` |
-| Allowed actions | `npm publish` |
+| Allowed actions | **Allow npm publish — checked** (see below) |
+
+#### The "Allow npm publish" checkbox must stay CHECKED
+
+npm's trusted-publisher form now carries an **Allowed actions** section with an **"Allow npm
+publish"** checkbox. This is npm's **staged publishing** control, added in **2026** — it did **not
+exist** when the trusted publishers for `joplin-plugin-ridgeline` and `joplin-plugin-cockpit` were
+set up, so those playbooks say nothing about it and neither did this one until v0.2.0.
+
+**It must stay checked.** With it cleared, the trusted publisher is only allowed to run
+`npm stage publish`: the workflow's plain `npm publish` is rejected, and the version lands in a
+staging area that a maintainer then has to **promote manually on npmjs.com or via the CLI, with
+2FA**. That would quietly turn every release from "cut the Release and walk away" into "cut the
+Release, then go and touch the YubiKey" — the exact hands-off property the whole trusted-publishing
+setup exists to buy. See
+[docs.npmjs.com/trusted-publishers](https://docs.npmjs.com/trusted-publishers).
+
+If a release ever fails with an authorisation error despite the claims matching, check this box
+first.
 
 The **Environment** name must match on both sides. GitHub only adds an `environment` claim to the
 OIDC token when the job declares `environment:` — `publish.yml` declares `environment: npm`, so npm
@@ -265,7 +309,8 @@ release** — if `npm view joplin-plugin-whereabouts version` shows the new vers
 - [ ] `npm run dist` run after the final commit; release cut with
       `gh release create … --repo pmslava/joplin-plugin-whereabouts --target main` and the `.jpl`
       attached.
-- [ ] **v0.2.0 only:** the bootstrap above completed (manual publish → trusted publisher configured →
-      `npm logout`), and `publish.yml` finished green via the idempotency guard.
+- [ ] Trusted publisher still configured, with **"Allow npm publish" checked** — a `workflow_dispatch`
+      run of `publish.yml` prints `(exchange succeeded)` and skips the publish.
+- [ ] `publish.yml` succeeded; **no** manual `npm publish` (the v0.2.0 bootstrap was the only one).
 - [ ] `npm view joplin-plugin-whereabouts version` shows the new version.
 - [ ] Catalogue shows the plugin (allow up to ~a day; a stale page is not a failed release).
