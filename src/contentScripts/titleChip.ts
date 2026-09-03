@@ -94,11 +94,19 @@ class TitleChip {
 	/**
 	 * True when this editor is in a secondary window (Note -> Open in new window).
 	 *
-	 * This affects the CLICKS ONLY. The chip itself is fully correct there: the editor sends its own
-	 * note id with every state request, so a secondary window names its own notebook regardless of
-	 * which window has focus. But `openNote`, `focusElementNoteList` and `moveToFolder` all drive the
-	 * MAIN window's sidebar and note list, so firing them from a detached editor would rearrange
-	 * something the user is not looking at. The chip stays visible and goes inert.
+	 * This affects SOME of the clicks. The chip itself is fully correct there: the editor sends its
+	 * own note id with every state request, so a secondary window names its own notebook regardless
+	 * of which window has focus.
+	 *
+	 * What differs is per action, not per window:
+	 *  - `filter` and `reveal` are NAVIGATION. `openNote` and `focusElementNoteList` drive the main
+	 *    window's sidebar and note list, against the focused window's state, so firing them from a
+	 *    detached editor would rearrange something the user is not looking at. Still disabled here.
+	 *  - `move` is not navigation. `moveToFolder(itemIds)` moves by explicit note id
+	 *    (`Note.moveToFolder`) and touches no selection at all, and a secondary window mounts its own
+	 *    `WindowCommandsAndDialogs` — so its folder picker opens in the window the user right-clicked
+	 *    in, and the move applies to the note that window is showing. Safe, and useful: filing a note
+	 *    you have opened in its own window is exactly when you want it.
 	 *
 	 * `document` is the main window's document even for this editor — Joplin appends the content
 	 * script there — which is exactly what makes the comparison a reliable signal.
@@ -160,7 +168,7 @@ class TitleChip {
 	private attachHandlers(): void {
 		this.button.addEventListener('click', (event: MouseEvent) => {
 			event.preventDefault();
-			if (!this.canAct()) return;
+			if (!this.canAct('filter')) return;
 			// Defer: a double click also emits two `click` events, and reveal must win over filter.
 			if (this.clickTimer !== null) this.ownerWin.clearTimeout(this.clickTimer);
 			this.clickTimer = this.ownerWin.setTimeout(() => {
@@ -175,20 +183,36 @@ class TitleChip {
 				this.ownerWin.clearTimeout(this.clickTimer);
 				this.clickTimer = null;
 			}
-			if (!this.canAct()) return;
+			if (!this.canAct('reveal')) return;
 			this.onAction('reveal', this.state);
 		});
 
 		this.button.addEventListener('contextmenu', (event: MouseEvent) => {
 			// Without this the app's own context menu opens on top of the folder picker.
 			event.preventDefault();
-			if (!this.canAct()) return;
+			if (!this.canAct('move')) return;
 			this.onAction('move', this.state);
 		});
 	}
 
-	private canAct(): boolean {
-		return this.state.actionable && !!this.state.noteId && !this.inSecondaryWindow;
+	/**
+	 * What this chip is allowed to do right now.
+	 *
+	 *  - `none`      the note itself is off limits (conflict, trash, read-only share), so nothing.
+	 *  - `move-only` a secondary editor window: filing works, navigation does not. See
+	 *                `inSecondaryWindow`.
+	 *  - `all`       the ordinary case.
+	 */
+	private actionMode(): 'all' | 'move-only' | 'none' {
+		if (!this.state.actionable || !this.state.noteId) return 'none';
+		return this.inSecondaryWindow ? 'move-only' : 'all';
+	}
+
+	private canAct(action: ChipAction): boolean {
+		const mode = this.actionMode();
+		if (mode === 'none') return false;
+		if (mode === 'move-only') return action === 'move';
+		return true;
 	}
 
 	// ── placement ─────────────────────────────────────────────────────────────────────────────────
@@ -565,7 +589,7 @@ class TitleChip {
 			text,
 			placement,
 			String(settings.showIcon),
-			String(this.canAct()),
+			this.actionMode(),
 			this.state.noteId,
 			this.state.folderId,
 		].join('|');
@@ -590,12 +614,19 @@ class TitleChip {
 			this.icon.hidden = !settings.showIcon;
 
 			this.label.textContent = text;
-			const hint = this.canAct()
-				? 'Click to show this notebook, double-click to reveal the note, right-click to move it'
-				: '';
+			const mode = this.actionMode();
+			// Say what actually works here, so a secondary window does not look broken when a click
+			// does nothing.
+			const hint =
+				mode === 'all'
+					? 'Click to show this notebook, double-click to reveal the note, right-click to move it'
+					: mode === 'move-only'
+						? 'Right-click to move · click actions work in the main window'
+						: '';
 			this.button.title = hint ? `In: ${text}\n${hint}` : `In: ${text}`;
 			this.button.setAttribute('aria-label', `In: ${text}`);
-			this.host.classList.toggle('-inert', !this.canAct());
+			this.host.classList.toggle('-inert', mode === 'none');
+			this.host.classList.toggle('-move-only', mode === 'move-only');
 		}
 
 		this.place();

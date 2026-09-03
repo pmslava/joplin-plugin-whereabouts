@@ -1,12 +1,22 @@
 import { test, expect } from '@playwright/test';
 import { closeJoplin, findSecondaryWindow, launchJoplin, type JoplinInstance } from './launch';
-import { connectDataApi, seedNotebooks, NOTE_IN_BETA_TITLE, NOTE_IN_GAMMA_TITLE, type SeedData } from './dataApi';
+import {
+	connectDataApi,
+	seedNotebooks,
+	NOTE_IN_BETA_TITLE,
+	NOTE_IN_GAMMA_TITLE,
+	type DataApi,
+	type SeedData,
+} from './dataApi';
 import {
 	CHIP_BUTTON,
 	CHIP_LABEL,
 	SETTLE,
 	chipNoteId,
+	closeAnyOpenDialog,
 	expandAllNotebooks,
+	folderPickerOpen,
+	openDialogClasses,
 	openNoteInNewWindow,
 	selectNoteByTitle,
 	selectNotebookByTitle,
@@ -29,10 +39,11 @@ test.describe('Whereabouts — secondary editor window', () => {
 	let joplin: JoplinInstance;
 	let seed: SeedData;
 	let secondary: Page;
+	let api: DataApi;
 
 	test.beforeAll(async () => {
 		joplin = await launchJoplin();
-		const api = await connectDataApi(joplin.apiToken);
+		api = await connectDataApi(joplin.apiToken);
 		seed = await seedNotebooks(api);
 		await joplin.win.waitForTimeout(SETTLE * 2);
 		await expandAllNotebooks(joplin.win);
@@ -51,6 +62,13 @@ test.describe('Whereabouts — secondary editor window', () => {
 		await selectNoteByTitle(joplin.win, NOTE_IN_GAMMA_TITLE);
 		await waitForChip(joplin.win);
 		await waitForChip(secondary);
+	});
+
+	// A modal <dialog> swallows every interaction in its window, so never let one survive a test —
+	// and here it can be open in either window.
+	test.afterEach(async () => {
+		if (secondary) await closeAnyOpenDialog(secondary);
+		if (joplin) await closeAnyOpenDialog(joplin.win);
 	});
 
 	test.afterAll(async () => {
@@ -77,7 +95,7 @@ test.describe('Whereabouts — secondary editor window', () => {
 		expect(await chipNoteId(win)).toBe(seed.noteInGamma.id);
 	});
 
-	test('the secondary window\'s chip is inert', async () => {
+	test('the secondary window\'s chip offers move only, and a left click still changes nothing', async () => {
 		const { win } = joplin;
 		await win.bringToFront();
 		await win.waitForTimeout(SETTLE);
@@ -85,15 +103,52 @@ test.describe('Whereabouts — secondary editor window', () => {
 		const folderBefore = await selectedSidebarFolderId(win);
 		const noteBefore = await chipNoteId(win);
 
-		// It must render as non-interactive...
-		await expect(secondary.locator('[data-whereabouts-chip]')).toHaveClass(/-inert/);
+		// Right-click works here, left-click does not — so the chip is marked move-only rather than
+		// fully inert, and it must NOT be dimmed as an unusable control.
+		const host = secondary.locator('[data-whereabouts-chip]');
+		await expect(host).toHaveClass(/-move-only/);
+		await expect(host).not.toHaveClass(/-inert/);
 
-		// ...and clicking it must not reach into the main window's sidebar or note selection.
+		// The navigation half stays disabled: a left click must not reach into the main window's
+		// sidebar or note selection.
 		await secondary.locator(CHIP_BUTTON).first().click();
 		await secondary.waitForTimeout(SETTLE * 2);
 
 		expect(await selectedSidebarFolderId(win)).toBe(folderBefore);
 		expect(await chipNoteId(win)).toBe(noteBefore);
 		expect(await chipNoteId(secondary)).toBe(seed.noteInBeta.id);
+	});
+
+	test('a right click opens the move picker INSIDE the secondary window, and cancelling moves nothing', async () => {
+		const { win } = joplin;
+		await secondary.bringToFront();
+		await secondary.waitForTimeout(SETTLE);
+
+		await secondary.locator(CHIP_BUTTON).first().click({ button: 'right' });
+
+		// The picker must belong to the window the user right-clicked in. Joplin's secondary editor
+		// window mounts its own WindowCommandsAndDialogs, so the dialog is in THAT document — this is
+		// the whole reason move is safe here while navigation is not.
+		await expect
+			.poll(
+				async () =>
+					(await folderPickerOpen(secondary))
+						? 'prompt-dialog open'
+						: `open dialogs: ${(await openDialogClasses(secondary)).join(' | ') || 'none'}`,
+				{ timeout: 20_000 },
+			)
+			.toBe('prompt-dialog open');
+		// ...and NOT in the main window.
+		expect(await folderPickerOpen(win), 'no picker in the main window').toBe(false);
+
+		await secondary.keyboard.press('Escape');
+		await expect.poll(() => folderPickerOpen(secondary), { timeout: 20_000 }).toBe(false);
+
+		// Cancelling must leave the note where it was — checked at the data layer, not the UI.
+		const note = await api.get<{ id: string; parent_id: string }>(
+			`/notes/${seed.noteInBeta.id}?fields=id,parent_id`,
+		);
+		expect(note.parent_id).toBe(seed.beta.id);
+		await expect(secondary.locator(CHIP_LABEL)).toHaveText('Beta');
 	});
 });

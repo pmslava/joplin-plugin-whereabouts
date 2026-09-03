@@ -212,7 +212,7 @@ html.whereabouts-hide-native
 	margin-right: 5px;
 }
 
-/* Conflict notes, notes in the trash, and secondary editor windows: shown, but not clickable. */
+/* Conflict notes, notes in the trash, and notes in a read-only share: shown, but not clickable. */
 .whereabouts-host.-inert .whereabouts-chip {
 	cursor: default;
 	opacity: 0.7;
@@ -220,6 +220,16 @@ html.whereabouts-hide-native
 
 .whereabouts-host.-inert .whereabouts-chip:hover {
 	background-color: var(--joplin-background-color3);
+}
+
+/*
+ * A secondary editor window: right-click still files the note, but the click actions are navigation
+ * and belong to the main window. Not dimmed — the chip IS interactive here — but the cursor says
+ * "menu" rather than "link", so a left click that deliberately does nothing does not read as a bug.
+ * The tooltip spells it out.
+ */
+.whereabouts-host.-move-only .whereabouts-chip {
+	cursor: context-menu;
 }
 
 
