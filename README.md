@@ -9,7 +9,9 @@ are. You often don't: the sidebar scrolls, notebooks nest, and a note reached by
 the back button, or a second window arrives with no context at all.
 
 Whereabouts shows the notebook **all the time**, in the same place, and makes it do something when
-you click it.
+you click it. It was written for the request in
+[Always show notebook bread crumb underneath title](https://discourse.joplinapp.org/t/always-show-notebook-bread-crumb-underneath-title/50784)
+on the Joplin forum.
 
 ### Own row below the title (default)
 
@@ -29,8 +31,8 @@ The title gets the full width; the date and the note-toolbar icons drop onto the
 
 ![The chip as the first item of the editor toolbar](docs/images/placement-editor-toolbar.png)
 
-*(These are captured from the running app by the end-to-end suite, so they always show the current
-build.)*
+*(All four are captured from the running app by the end-to-end suite itself, against its
+`Alpha / Beta` test notebooks, so they always show what the current build actually renders.)*
 
 In every placement the chip sits on Joplin's own vertical rhythm: the blank space above the chip's
 row and the blank space below it are equal, and both match the gap a normal single-line title leaves
@@ -70,11 +72,15 @@ Found under **Tools → Options → Whereabouts**. All of them apply live; no re
 
 ## Installing
 
-From Joplin: **Tools → Options → Plugins**, search for *Whereabouts*.
+**From Joplin** (once the catalogue has picked it up): **Tools → Options → Plugins**, search for
+*Whereabouts*, install, and restart Joplin.
 
-Manually: download `io.github.pmslava.whereabouts.jpl` from the
-[releases](https://github.com/pmslava/joplin-plugin-whereabouts/releases), then **Tools → Options →
-Plugins → the gear icon → Install from file**, and restart Joplin.
+**From a file** (works immediately, and is the way to install a version the catalogue has not
+harvested yet): download `io.github.pmslava.whereabouts.jpl` from the
+[Releases page](https://github.com/pmslava/joplin-plugin-whereabouts/releases), then **Tools →
+Options → Plugins → the gear icon → Install from file**, and restart Joplin.
+
+Requires **Joplin desktop 3.7 or newer**.
 
 ## Limitations
 
@@ -104,7 +110,10 @@ These are structural, not bugs to be fixed later:
 
 ## Development
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for the build, install and end-to-end test loop.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the build, the local install loop and the real-app
+end-to-end suite, and [PUBLISHING.md](PUBLISHING.md) for the release pipeline.
+
+Issues and pull requests: <https://github.com/pmslava/joplin-plugin-whereabouts/issues>.
 
 ## Licence
 
