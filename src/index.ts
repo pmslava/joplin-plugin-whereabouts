@@ -302,6 +302,145 @@ async function tryExecute(name: string, ...args: unknown[]): Promise<void> {
 	}
 }
 
+// ── handing focus to the main window ────────────────────────────────────────────────────────────
+
+/** How long one hand-off attempt may wait for its evidence, and how often it re-asks. */
+const HANDOFF_TIMEOUT_MS = 1000;
+const HANDOFF_POLL_MS = 60;
+
+/**
+ * How old the main window's last self-report may be before the hand-off refuses to trust it.
+ *
+ * An editor polls every 1.2s and backs off to 5s when nothing changes, and skips the tick entirely
+ * while its document is hidden — so anything inside a few seconds is a live answer, and anything
+ * older means the main window has not spoken recently enough to be quoted.
+ */
+const MAIN_WINDOW_NOTE_TTL_MS = 12_000;
+
+/**
+ * Poll `read` until `accept` is happy, or the budget runs out. Returns the accepted value or null.
+ *
+ * Deliberately not a fixed sleep: the hand-off below has to wait for two separate asynchronous
+ * things (Electron raising a window, and Joplin's renderer reacting to that), and how long either
+ * takes depends on the window manager and the machine. A sleep long enough to be safe would make
+ * every click feel slow, and a short one would be a race. Polling for the EFFECT costs whatever the
+ * effect costs and no more.
+ */
+async function pollFor<T>(
+	read: () => Promise<T>,
+	accept: (value: T) => boolean,
+	timeoutMs = HANDOFF_TIMEOUT_MS,
+): Promise<T | null> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		let value: T;
+		try {
+			value = await read();
+		} catch (error) {
+			value = null as unknown as T;
+		}
+		if (value !== null && value !== undefined && accept(value)) return value;
+		if (Date.now() >= deadline) return null;
+		await new Promise((resolve) => setTimeout(resolve, HANDOFF_POLL_MS));
+	}
+}
+
+/**
+ * The note the MAIN window's editor is currently holding, and when it last said so.
+ *
+ * The plugin process has no window identity of its own and no API that reports one, so this is
+ * assembled from the state requests the editors already send: each one now says whether it is in a
+ * secondary window (`ContentScriptMessage`), and the main window's editor therefore names its own
+ * note several times a minute. That single fact is what makes the hand-off below verifiable — see
+ * `handOverToMainWindow`. It costs nothing extra: no new command, no extra round trip, and it is
+ * refreshed by the poll the chip runs anyway.
+ *
+ * `at` is kept so a value from a main window that has been hidden (its editor skips the poll while
+ * the document is not visible) is treated as what it is: an old answer, to be waited out rather
+ * than trusted.
+ */
+let mainWindowNote: { id: string; at: number } | null = null;
+
+/**
+ * Hand focus to the MAIN window and wait until Joplin's root state is the main window's.
+ * Returns true only when that is confirmed; on false NOTHING has been navigated.
+ *
+ * WHY this is needed at all. Joplin keeps ONE redux store, and the state at its ROOT is the FOCUSED
+ * window's: the `WINDOW_FOCUS` reducer swaps the newly focused window's slice into root and the
+ * previous one out (`handleWindowActions` / its `handleFocus` in @joplin/lib's reducer). Commands
+ * read and write that one store — CommandService's `createContext()` is literally
+ * `{ state: this.store_.getState(), dispatch: t => this.store_.dispatch(t) }` for every runtime,
+ * with no per-window store — and `openNote` is a
+ * `context.dispatch({ type: 'FOLDER_AND_NOTE_SELECT', ... })`
+ * (app-desktop `gui/WindowCommandsAndDialogs/commands/openNote.ts` lines 18-23). A plugin cannot
+ * pass a window id, so "which window does openNote navigate?" has exactly one answer: the focused
+ * one. Called straight from a secondary editor window it would rearrange THAT window — the opposite
+ * of what clicking the chip means, which is why 0.2.1 disabled the click actions there instead.
+ *
+ * HOW THE SWITCH IS ISSUED. No plugin API focuses a window, so this borrows a core command that
+ * does it as a side effect. `focusElementSideBar` (app-desktop
+ * `gui/Sidebar/commands/focusElementSideBar.ts` lines 19-23) calls `bridge().switchToMainWindow()`
+ * under the comment "The sidebar is only present in the main window"; that is
+ * `switchToWindow(defaultWindowId)` (app-desktop `bridge.ts` lines 358-368), which calls
+ * `targetWindow.show()` unless the main window is already the active one — and Electron's `show()`
+ * raises AND focuses. Its only other effect is to scroll and focus the sidebar tree
+ * (`gui/Sidebar/hooks/useFocusHandler.ts`, `focusSidebar`): no dispatch, no navigation.
+ *
+ * `focusElementNoteList` is the other command carrying `switchToMainWindow()` and is deliberately
+ * NOT the one used, even though it is the more obvious find: it also runs `focusNote(noteId)`,
+ * which focuses the note list and marks the row. That is precisely what separates this plugin's
+ * double click from its single click, so borrowing it here would collapse the two gestures into
+ * one. (Reveal still calls it — afterwards, on purpose.)
+ *
+ * HOW THE SWITCH IS CONFIRMED. Not by a sleep, and not by asking whether a window "has focus" —
+ * a plugin cannot ask that, and `document.hasFocus()` is not decisive anyway (under a bare X server
+ * with no window manager every Joplin document reports true at once). The condition that actually
+ * matters is observable directly: root state's selected note must be the note the MAIN window's
+ * editor is holding. `joplin.workspace.selectedNote()` reads root; `mainWindowNote` above says what
+ * the main window has. While the secondary window owns root the two disagree, and they can only
+ * come to agree once `WINDOW_FOCUS` has swapped the main window's slice in — i.e. once the raise
+ * has really happened and Joplin has really reacted to it. (The chain being waited on:
+ * `webContents.on('focus')` -> `send('window-focused')` in app-desktop `ElectronAppWrapper.ts`
+ * lines 385-391 and 427-429, then the `WINDOW_FOCUS` dispatch in app-desktop `app.ts` lines
+ * 739-748.) Both sides are re-read on every tick, so a main window that was hidden and is now
+ * showing converges as soon as its editor polls again.
+ *
+ * Two ways this can end without a confirmation, both of which leave everything untouched:
+ *  - the main window has no Markdown editor to speak for it (no note open there, or the Rich Text
+ *    editor), so `mainWindowNote` is unknown or stale;
+ *  - the sidebar is hidden, in which case `focusElementSideBar` short-circuits on `sideBarVisible`
+ *    and never calls `switchToMainWindow()` at all.
+ * It is attempted twice before giving up — a raise can lose a race with a modal or a workspace
+ * switch — and then warns rather than navigating on a guess.
+ *
+ * The one blind spot is benign: if BOTH windows are showing the same note the test cannot tell the
+ * slices apart and passes immediately. The main window is then already on that note, so running the
+ * action against the wrong slice changes nothing the user can see — and the raise has happened
+ * regardless, which is the visible half of what they asked for.
+ */
+async function handOverToMainWindow(): Promise<boolean> {
+	for (let attempt = 1; attempt <= 2; attempt++) {
+		// Fire-and-forget: if the sidebar is hidden this command does nothing at all, which the
+		// confirmation below then catches rather than papering over.
+		await tryExecute('focusElementSideBar');
+
+		const settled = await pollFor(
+			async () => {
+				const known = mainWindowNote;
+				if (!known || Date.now() - known.at > MAIN_WINDOW_NOTE_TTL_MS) return false;
+				const selected = await joplin.workspace.selectedNote();
+				return selected?.id === known.id;
+			},
+			(agreed) => agreed === true,
+		);
+		if (settled) return true;
+	}
+	console.warn(
+		'[whereabouts] could not hand focus to the main window; leaving both windows untouched',
+	);
+	return false;
+}
+
 /**
  * Left click: select the note's notebook in the sidebar WITHOUT losing the open note.
  *
@@ -358,6 +497,16 @@ async function handleAction(
 	// Act on the note's CURRENT parent, not the one the chip was drawn with.
 	const folderId = note.parent_id;
 
+	// A click in a SECONDARY editor window means "go there in the main window": both navigation
+	// actions run against the focused window's state, so the main window has to be focused first.
+	// `move` is exempt — it moves by explicit id and mounts its picker in the window that asked, so
+	// it must stay in the secondary window (that is the 0.2.1 behaviour, unchanged).
+	if (message.secondary && message.action !== 'move') {
+		if (!(await handOverToMainWindow())) {
+			return { ok: false, error: 'could not hand focus to the main window' };
+		}
+	}
+
 	try {
 		switch (message.action) {
 			case 'filter':
@@ -383,6 +532,13 @@ async function onContentScriptMessage(message: ContentScriptMessage): Promise<un
 	if (!message || typeof message !== 'object') return null;
 	switch (message.type) {
 		case 'getState':
+			// Every request from a MAIN-window editor is also the plugin's only window-identity
+			// signal: it is how `handOverToMainWindow` knows what the main window is showing, and
+			// therefore whether Joplin's root state currently belongs to it. Recorded here rather
+			// than in buildState() so the fact is captured even when the state itself is empty.
+			if (!message.secondary && typeof message.noteId === 'string' && message.noteId) {
+				mainWindowNote = { id: message.noteId, at: Date.now() };
+			}
 			return buildState(message.noteId);
 		case 'action':
 			return handleAction(message);

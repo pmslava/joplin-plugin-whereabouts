@@ -94,19 +94,18 @@ class TitleChip {
 	/**
 	 * True when this editor is in a secondary window (Note -> Open in new window).
 	 *
-	 * This affects SOME of the clicks. The chip itself is fully correct there: the editor sends its
-	 * own note id with every state request, so a secondary window names its own notebook regardless
-	 * of which window has focus.
-	 *
-	 * What differs is per action, not per window:
-	 *  - `filter` and `reveal` are NAVIGATION. `openNote` and `focusElementNoteList` drive the main
-	 *    window's sidebar and note list, against the focused window's state, so firing them from a
-	 *    detached editor would rearrange something the user is not looking at. Still disabled here.
-	 *  - `move` is not navigation. `moveToFolder(itemIds)` moves by explicit note id
+	 * The chip itself is fully correct there without this: the editor sends its own note id with
+	 * every state request, so a secondary window names its own notebook regardless of which window
+	 * has focus. What the flag is for is the ACTIONS, and since 0.3.0 it no longer disables any of
+	 * them — it only tells the plugin process which situation it is in:
+	 *  - `filter` and `reveal` are NAVIGATION: `openNote` dispatches against Joplin's ROOT redux
+	 *    state, which is the FOCUSED window's state, and a plugin cannot pass a window id. So from a
+	 *    secondary window the plugin first hands focus to the main window and then runs the action
+	 *    there — see `handOverToMainWindow` in index.ts. The secondary window keeps its own note.
+	 *  - `move` needs none of that. `moveToFolder(itemIds)` moves by explicit note id
 	 *    (`Note.moveToFolder`) and touches no selection at all, and a secondary window mounts its own
 	 *    `WindowCommandsAndDialogs` — so its folder picker opens in the window the user right-clicked
-	 *    in, and the move applies to the note that window is showing. Safe, and useful: filing a note
-	 *    you have opened in its own window is exactly when you want it.
+	 *    in, and the move applies to the note that window is showing.
 	 *
 	 * `document` is the main window's document even for this editor — Joplin appends the content
 	 * script there — which is exactly what makes the comparison a reliable signal.
@@ -198,21 +197,19 @@ class TitleChip {
 	/**
 	 * What this chip is allowed to do right now.
 	 *
-	 *  - `none`      the note itself is off limits (conflict, trash, read-only share), so nothing.
-	 *  - `move-only` a secondary editor window: filing works, navigation does not. See
-	 *                `inSecondaryWindow`.
-	 *  - `all`       the ordinary case.
+	 *  - `none` the note itself is off limits (conflict, trash, read-only share), so nothing.
+	 *  - `all`  everything else, INCLUDING a secondary editor window. Up to 0.2.1 a secondary window
+	 *           was a third mode ('move-only') because the navigation actions would have driven the
+	 *           wrong window; 0.3.0 makes the plugin hand focus to the main window first instead, so
+	 *           the chip behaves the same in every window and needs no third state.
 	 */
-	private actionMode(): 'all' | 'move-only' | 'none' {
+	private actionMode(): 'all' | 'none' {
 		if (!this.state.actionable || !this.state.noteId) return 'none';
-		return this.inSecondaryWindow ? 'move-only' : 'all';
+		return 'all';
 	}
 
-	private canAct(action: ChipAction): boolean {
-		const mode = this.actionMode();
-		if (mode === 'none') return false;
-		if (mode === 'move-only') return action === 'move';
-		return true;
+	private canAct(_action: ChipAction): boolean {
+		return this.actionMode() !== 'none';
 	}
 
 	// ── placement ─────────────────────────────────────────────────────────────────────────────────
@@ -615,18 +612,15 @@ class TitleChip {
 
 			this.label.textContent = text;
 			const mode = this.actionMode();
-			// Say what actually works here, so a secondary window does not look broken when a click
-			// does nothing.
+			// One hint for every window: since 0.3.0 a secondary window's chip does the same three
+			// things as the main window's, so there is nothing window-specific left to warn about.
 			const hint =
 				mode === 'all'
 					? 'Click to show this notebook, double-click to reveal the note, right-click to move it'
-					: mode === 'move-only'
-						? 'Right-click to move · click actions work in the main window'
-						: '';
+					: '';
 			this.button.title = hint ? `In: ${text}\n${hint}` : `In: ${text}`;
 			this.button.setAttribute('aria-label', `In: ${text}`);
 			this.host.classList.toggle('-inert', mode === 'none');
-			this.host.classList.toggle('-move-only', mode === 'move-only');
 		}
 
 		this.place();
@@ -674,12 +668,23 @@ export default (context: ContentScriptContext): MarkdownEditorContentScriptModul
 			return;
 		}
 
+		// Which window this editor is in. `document` is always the MAIN window's document — Joplin
+		// appends the content script there whatever window the editor lives in — so this comparison
+		// is the reliable signal, and the plugin process has no way of working it out for itself.
+		const inSecondaryWindow = view.dom.ownerDocument !== document;
+
 		let chip: TitleChip | null = TitleChip.create(view, (action, state) => {
 			// Report failures rather than swallowing them: openNote throws if the note or its parent
 			// notebook has vanished, and moveToFolder throws on an id it cannot load. A dead-feeling
 			// button with nothing in the console is the worst of both worlds.
 			void context
-				.postMessage({ type: 'action', action, noteId: state.noteId, folderId: state.folderId })
+				.postMessage({
+					type: 'action',
+					action,
+					noteId: state.noteId,
+					folderId: state.folderId,
+					secondary: inSecondaryWindow,
+				})
 				.then((result: ActionResult | null) => {
 					if (result && result.ok === false) {
 						console.warn(`[whereabouts] action "${action}" did not run: ${result.error ?? 'unknown reason'}`);
@@ -742,7 +747,14 @@ export default (context: ContentScriptContext): MarkdownEditorContentScriptModul
 			void (async () => {
 				let state: ChipState | null = null;
 				try {
-					state = (await context.postMessage({ type: 'getState', noteId: currentNoteId() })) as ChipState | null;
+					// `secondary` rides along on every request, not just on actions: it is how the plugin
+					// learns which note the MAIN window's editor holds, which is the fact it needs to
+					// tell whose state Joplin currently has at the root. See handOverToMainWindow().
+					state = (await context.postMessage({
+						type: 'getState',
+						noteId: currentNoteId(),
+						secondary: inSecondaryWindow,
+					})) as ChipState | null;
 				} catch (error) {
 					return; // transient; the poll comes round again
 				}

@@ -97,8 +97,15 @@ export type ContentScriptMessage =
 	// `noteId` is the id THIS editor holds, taken from the CodeMirror noteId facet. It is what makes
 	// a secondary editor window show its own notebook instead of the focused window's. It is omitted
 	// only when the facet is unavailable, in which case the plugin falls back to the selected note.
-	| { type: 'getState'; noteId?: string }
-	| { type: 'action'; action: ChipAction; noteId: string; folderId: string };
+	// `secondary` says which kind of window the asking editor is in. The plugin cannot work that out
+	// for itself — it has no window identity at all — and it needs it twice over:
+	//  - on `getState`, to learn which note the MAIN window's editor is holding, which is what lets
+	//    it tell whether Joplin's root state currently belongs to the main window;
+	//  - on `action`, because from a secondary window `filter` and `reveal` must hand focus to the
+	//    main window before they run, or they would navigate the detached window instead.
+	// Both are `handOverToMainWindow` in index.ts.
+	| { type: 'getState'; noteId?: string; secondary: boolean }
+	| { type: 'action'; action: ChipAction; noteId: string; folderId: string; secondary: boolean };
 
 /** What the plugin answers an `action` message with, so the content script can report a failure. */
 export interface ActionResult {

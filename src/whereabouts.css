@@ -223,14 +223,11 @@ html.whereabouts-hide-native
 }
 
 /*
- * A secondary editor window: right-click still files the note, but the click actions are navigation
- * and belong to the main window. Not dimmed — the chip IS interactive here — but the cursor says
- * "menu" rather than "link", so a left click that deliberately does nothing does not read as a bug.
- * The tooltip spells it out.
+ * There is deliberately no secondary-window variant any more. Up to 0.2.1 a chip in a secondary
+ * editor window wore a `-move-only` class and a `context-menu` cursor, because its click actions
+ * were disabled; since 0.3.0 the plugin hands focus to the main window and runs them there, so the
+ * chip is an ordinary, fully live chip in every window and must LOOK like one.
  */
-.whereabouts-host.-move-only .whereabouts-chip {
-	cursor: context-menu;
-}
 
 
 /* ── below-title-compact: the title row folded into two lines ──────────────────────────────────
