@@ -93,7 +93,10 @@ These are structural, not bugs to be fixed later:
   in the note's kebab menu.)
 - **Markdown editor only** — including Split and Viewer-only layouts, all of which work. The **Rich
   Text (WYSIWYG) editor does not**: it is a different component with no CodeMirror instance, so no
-  plugin JavaScript runs in that window at all and no chip can appear.
+  plugin JavaScript runs in that window at all and no chip can appear. In Rich Text mode Whereabouts
+  now stays completely inert; up to 0.3.0 it pulled the caret out of the note title into the note
+  body a moment after you stopped typing
+  ([#1](https://github.com/pmslava/joplin-plugin-whereabouts/issues/1)).
 - **It depends on Joplin's internal DOM.** Joplin has no API that reaches the note title bar, so
   Whereabouts injects into the title bar directly. The selectors it uses are verified against
   **Joplin 3.7.x** (`app_min_version: "3.7"`). A future Joplin could rename or restructure the title

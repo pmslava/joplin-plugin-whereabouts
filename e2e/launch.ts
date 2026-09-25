@@ -68,12 +68,26 @@ export function assertE2EReady(): void {
   }
 }
 
+/** Joplin's own settings a spec can ask for. Kept apart from SeedSettings, which is plugin-only. */
+export interface ProfileOptions {
+  /**
+   * Start on the Rich Text (TinyMCE) editor instead of the Markdown one, i.e. seed
+   * `editor.codeView: false`. There is no chip in that mode by design; e2e/rich-text.spec.ts uses it
+   * to prove the plugin stays out of the way there.
+   */
+  richText?: boolean;
+}
+
 /**
  * Create a fresh, isolated Joplin profile that loads this plugin from ./dist. Optionally seed
  * Whereabouts' File-storage settings so a launch starts with e.g. placement=toolbar-first or
  * pathMode=full — these are read by the plugin at startup exactly as a user-set value would be.
  */
-export function createProfile(loadPlugin = true, seed: SeedSettings = {}): string {
+export function createProfile(
+  loadPlugin = true,
+  seed: SeedSettings = {},
+  options: ProfileOptions = {}
+): string {
   const profilesRoot = path.join(REPO_ROOT, 'e2e', '.profiles');
   fs.mkdirSync(profilesRoot, { recursive: true });
   const profileDir = fs.mkdtempSync(path.join(profilesRoot, 'profile-'));
@@ -85,8 +99,9 @@ export function createProfile(loadPlugin = true, seed: SeedSettings = {}): strin
     'sync.target': 0,
     // Whereabouts injects into the title bar of the CodeMirror (Markdown) editor, which is Joplin's
     // default body editor. Pin it explicitly: with the Rich Text editor selected there is no
-    // CodeMirror instance in the window, so no content script runs and no chip can exist.
-    'editor.codeView': true,
+    // CodeMirror instance in the window, so no content script runs and no chip can exist. The one
+    // exception is `richText`, for the spec that asserts the plugin is inert in exactly that mode.
+    'editor.codeView': !options.richText,
     // Joplin's built-in DARK theme, for the whole suite.
     //
     // The four docs/images screenshots are captured by e2e/placement.spec.ts from this very profile
@@ -167,11 +182,11 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<void> {
 }
 
 export async function launchJoplin(
-  opts: { loadPlugin?: boolean; profileDir?: string; seed?: SeedSettings } = {}
+  opts: { loadPlugin?: boolean; profileDir?: string; seed?: SeedSettings } & ProfileOptions = {}
 ): Promise<JoplinInstance> {
-  const { loadPlugin = true, seed = {} } = opts;
+  const { loadPlugin = true, seed = {}, richText = false } = opts;
   assertE2EReady();
-  const profileDir = opts.profileDir ?? createProfile(loadPlugin, seed);
+  const profileDir = opts.profileDir ?? createProfile(loadPlugin, seed, { richText });
   const apiToken = readApiToken(profileDir);
 
   let lastError: unknown;
@@ -277,6 +292,40 @@ export async function findSecondaryWindow(
     await new Promise((r) => setTimeout(r, 400));
   }
   return null;
+}
+
+/**
+ * Wait until the plugin's `onStart` has run to the end, i.e. every event handler is registered.
+ *
+ * For a spec with no chip to wait for (the Rich Text one), this is the only proof that the plugin
+ * is loaded and listening; without it such a spec could finish before the plugin started and pass
+ * for the wrong reason. Joplin runs each plugin in a hidden BrowserWindow of its own
+ * (`plugin_index.html?pluginId=<id>`, app-desktop `services/plugins/PluginRunner.ts`), which CDP
+ * lists as an ordinary page, so the plugin's console is readable from here — and `onStart` logs
+ * `[whereabouts] <id> started` as its LAST statement. `page.consoleMessages()` returns that line
+ * even when it was logged before this is called (measured against 3.7.14).
+ */
+export async function waitForPluginStarted(
+  instance: JoplinInstance,
+  timeoutMs = 60_000
+): Promise<void> {
+  const marker = `[whereabouts] ${PLUGIN_ID} started`;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    for (const ctx of instance.browser.contexts()) {
+      for (const p of ctx.pages()) {
+        if (!p.url().includes(`pluginId=${encodeURIComponent(PLUGIN_ID)}`)) continue;
+        try {
+          const messages = await p.consoleMessages();
+          if (messages.some((m) => m.text() === marker)) return;
+        } catch {
+          /* the plugin window may still be loading; keep polling */
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  throw new Error(`The plugin never logged "${marker}" within ${timeoutMs}ms`);
 }
 
 export async function waitForJoplinReady(win: Page): Promise<void> {

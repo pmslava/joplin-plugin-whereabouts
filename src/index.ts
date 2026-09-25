@@ -361,24 +361,52 @@ function nextNonce(): string {
 }
 
 /**
+ * Is the Markdown editor the one showing — as far as a plugin can tell?
+ *
+ * Joplin keeps the editor choice PER WINDOW (`windowState.editorCodeView`), and a plugin cannot read
+ * window state. What it can read is the global `editor.codeView` setting, which `toggleEditors`
+ * writes alongside the per-window dispatch and which a new window starts from — so it records the
+ * editor of the window that was toggled LAST. Anything unreadable answers "Markdown", Joplin's
+ * default and the mode this plugin exists for.
+ */
+async function markdownEditorSelected(): Promise<boolean> {
+	try {
+		return (await joplin.settings.globalValue('editor.codeView')) !== false;
+	} catch (error) {
+		return true;
+	}
+}
+
+/**
  * Nudge the FOCUSED window's editor to ask for its state again, optionally tagging the request so
  * the answer can be recognised.
  *
  * Deliberately a PING with no state payload: this process cannot tell which note the receiving
  * editor holds (see buildState), so pushing a state would risk handing a window another window's
- * notebook. `editor.execCommand` reaches only the FOCUSED window's editor and throws when no
- * Markdown editor is focused at all (Rich Text, or the app still starting), so failures here are
- * normal for the event-driven callers — every editor also polls, which is how unfocused windows
- * keep up. `handOverToMainWindow` uses the same one-window routing as a measuring instrument.
+ * notebook. `editor.execCommand` reaches only the FOCUSED window's editor and throws when there is
+ * no editor to take it (the app still starting), so failures here are normal for the event-driven
+ * callers — every editor also polls, which is how unfocused windows keep up. `handOverToMainWindow`
+ * uses the same one-window routing as a measuring instrument.
+ *
+ * NOT SENT AT ALL WHILE THE RICH TEXT EDITOR IS SELECTED (issue #1). It does not throw there:
+ * Joplin's TinyMCE component forwards `editor.execCommand` into TinyMCE's own `execCommand`, which
+ * calls `editor.focus()` for any command that is not an undo-level one BEFORE it looks the command
+ * up — so every ping moved the caret into the note body: out of the title about 300 ms after the
+ * user stopped typing (the save raises `onNoteChange`), and out of the note list on every selection.
+ * And there is nothing to gain there: with no Markdown editor there is no content script to answer.
+ * The caveat is `markdownEditorSelected`'s: a main window still on Markdown while a secondary window
+ * was the last one toggled to Rich Text loses its live ping too, and falls back to the content
+ * script's poll (up to 5 s behind).
  */
 async function pingRefresh(nonce?: string): Promise<void> {
+	if (!(await markdownEditorSelected())) return;
 	try {
 		await joplin.commands.execute(
 			'editor.execCommand',
 			nonce ? { name: REFRESH_COMMAND, args: [nonce] } : { name: REFRESH_COMMAND },
 		);
 	} catch (error) {
-		// No focused Markdown editor. The poll in the content script covers it.
+		// No editor to take the command. The poll in the content script covers it.
 	}
 }
 
@@ -468,10 +496,12 @@ async function sidebarIsVisible(): Promise<boolean> {
 }
 
 /** Why a hand-off did not happen. Kept apart so the warning can say which one it was. */
-type HandoffFailure = 'switch-failed' | 'no-main-editor' | 'not-confirmed';
+type HandoffFailure = 'rich-text' | 'switch-failed' | 'no-main-editor' | 'not-confirmed';
 
 function describeHandoffFailure(failure: HandoffFailure): string {
 	switch (failure) {
+		case 'rich-text':
+			return 'the main window is showing the Rich Text editor, so no editor there can answer';
 		case 'switch-failed':
 			return 'the command that switches windows threw';
 		case 'no-main-editor':
@@ -521,8 +551,18 @@ function describeHandoffFailure(failure: HandoffFailure): string {
  * agree trivially whenever both windows happen to be showing the same note, which is the NORMAL
  * state right after "Open in new window" and after every successful click, so it would confirm
  * nothing exactly when it matters most.
+ *
+ * WHEN IT GIVES UP, the warning names one of four causes. The first is checked before anything is
+ * switched: the Rich Text editor is selected. The click came from a secondary window's Markdown
+ * editor, so the window showing Rich Text is, in the normal case, the main one — nothing there can
+ * answer the proof, and `pingRefresh` does not even send it in that mode — so this refuses at once
+ * rather than raising the main window and waiting 2.5 s for an echo that cannot come. (Being read
+ * from a setting, that can be wrong in the per-window way `markdownEditorSelected` describes.) The
+ * other three come after the switch: the command threw; the main window never reported in at all,
+ * so it has no Markdown editor to act in; or it reported but did not answer a ping in time.
  */
 async function handOverToMainWindow(noteId: string): Promise<HandoffFailure | null> {
+	if (!(await markdownEditorSelected())) return 'rich-text';
 	const sidebarVisible = await sidebarIsVisible();
 	try {
 		if (sidebarVisible) {

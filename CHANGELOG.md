@@ -4,7 +4,31 @@ All notable changes to Whereabouts are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
-## [0.3.0] — Unreleased
+## [0.3.1] — 2026-09-25
+
+### Fixed
+
+- **The Rich Text editor no longer loses the caret to Whereabouts**
+  ([#1](https://github.com/pmslava/joplin-plugin-whereabouts/issues/1)). With the Rich Text
+  (WYSIWYG) editor selected, typing a note title moved the caret into the note body about 300 ms
+  after the last keystroke, and clicking a note in the note list put focus in the note body too.
+  The plugin nudges the focused editor to refresh its chip through `editor.execCommand` on every
+  note selection, note change (which saving a title is), sync and settings change. In the Markdown
+  editor that reaches the chip; in the Rich Text editor Joplin forwards it into TinyMCE's own
+  `execCommand`, which focuses the editor before it finds out the command does not exist. The code
+  assumed the call would simply throw there. It does not.
+
+  Whereabouts now reads Joplin's `editor.codeView` setting and sends nothing while the Rich Text
+  editor is selected, so it is completely inert in that mode, as it was always meant to be. For the
+  same reason a click on a secondary window's chip now gives up at once while the Rich Text editor
+  is selected, and says so in the console, instead of raising the main window and waiting 2.5s for
+  an answer no editor there could give. One caveat: Joplin keeps the editor choice per window, and
+  the setting records the window that was switched last. A main window still on Markdown while a
+  secondary window was the last one switched to Rich Text loses the instant refresh as well; its
+  chip still catches up through its own poll, within 5s. The new `e2e/rich-text.spec.ts` covers
+  both the title and the note-list case, and fails on the unfixed build.
+
+## [0.3.0] — 2026-09-03
 
 Part A of the secondary-window rework. Part B does not change what the Cockpit calls do — they
 already fire on every path, from either window — it adds the end-to-end coverage for them: a
@@ -181,6 +205,7 @@ First working version. Not yet published to the Joplin plugin repository.
 - Failed actions are reported to the console with a `[whereabouts]` prefix rather than silently
   doing nothing.
 
+[0.3.1]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/pmslava/joplin-plugin-whereabouts/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/pmslava/joplin-plugin-whereabouts/releases/tag/v0.2.0

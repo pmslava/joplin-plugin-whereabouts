@@ -105,8 +105,11 @@ before changing them:
      state right after "Open in new window" and after every successful click.
    - **The finish** is `focusElementNoteBody` after a single click, because the switch had to focus
      something (the sidebar tree) and a single click is defined by not moving focus.
-   If the proof never arrives, nothing is navigated and the console names which of the three causes
-   it was.
+   If the proof never arrives, nothing is navigated and the console names which cause it was: the
+   switch command threw, the main window never reported in, or it did not answer in time. A fourth
+   is checked before any of that: while the Rich Text editor is selected (`editor.codeView` is
+   false) no ping is sent at all — TinyMCE focuses itself on any `editor.execCommand`, which was
+   issue #1 — so the hand-off is refused up front instead of waiting for an echo that cannot come.
 
 ## End-to-end tests
 
@@ -161,6 +164,18 @@ top-right corner and measures difference from it, so it is theme-agnostic by con
 gaps come out identical on either theme (9px on both). Keep it that way: if an assertion ever needs a
 colour, make the assertion theme-agnostic rather than putting the suite back on light.
 
+### The editor
+
+Every profile seeds `editor.codeView: true`, the Markdown editor: that is where the chip lives, and
+the Rich Text editor has no CodeMirror instance for the content script to run in. The one exception
+is `launchJoplin({ richText: true })`, which seeds `editor.codeView: false` for
+`e2e/rich-text.spec.ts`. It is a launch option of its own, not part of `SeedSettings`, which holds
+plugin settings only.
+
+That spec has no chip to wait for, so it waits for the plugin's `[whereabouts] <id> started` line
+instead (`waitForPluginStarted` in `e2e/launch.ts`). Joplin runs each plugin in a hidden window of
+its own, which CDP lists as an ordinary page, so its console is readable from the harness.
+
 ### The machine-wide lock
 
 `e2e/guard.ts` takes a single lock under `~/.cache/joplin-plugin-e2e.lock`, **shared with the
@@ -182,6 +197,7 @@ Do not bypass the lock.
 | `e2e/path-mode.spec.ts` | `pathMode: 'full'` | `Alpha / Beta` for a nested notebook |
 | `e2e/placement.spec.ts` | each of the four placements, `pathMode: 'full'` | where each placement lands; below-title's left-edge alignment and symmetric gaps; the compact two-line layout; inline-right's vertical centring; editor-toolbar's parity with a sibling button and a non-collapsed label. Also writes `docs/images/placement-*.png`. |
 | `e2e/native-pill.spec.ts` | `hideNativePill: false` | the native pill stays visible |
+| `e2e/rich-text.spec.ts` | `richText: true` | the plugin stays inert in the Rich Text editor (issue #1): typing a title keeps the caret in the title after the note saves, and selecting a second note in the list leaves focus out of the note body |
 
 The secondary-window spec is the one to keep working: it is what proves each editor reports its own
 note rather than the focused window's (see point 4 above). The click specs assert command EFFECTS,
