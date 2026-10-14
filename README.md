@@ -128,6 +128,13 @@ end-to-end suite, and [PUBLISHING.md](PUBLISHING.md) for the release pipeline.
 
 Issues and pull requests: <https://github.com/pmslava/joplin-plugin-whereabouts/issues>.
 
+## Support
+
+If this plugin is useful to you, support the work:
+[GitHub Sponsors](https://github.com/sponsors/pmslava) for monthly or one-time sponsorship, or
+[Ko-fi](https://ko-fi.com/pmslava) for a one-off tip by PayPal or card without an account. All
+options: [pmslava.com/support](https://pmslava.com/support/).
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
